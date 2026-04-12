@@ -64,3 +64,4 @@ class GlobalExceptionHandler:
     async def handleDataBaseException(self, request: Request, exception: DataBaseException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
+

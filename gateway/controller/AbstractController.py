@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from fastapi import APIRouter
 from gateway.Singleton import Singleton
+from pojo.User import UserLoginRequest
 
 class AbstractController(Singleton):
 

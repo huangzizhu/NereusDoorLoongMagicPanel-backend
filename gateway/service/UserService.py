@@ -3,16 +3,20 @@ from Exception.InvalidTokenException import InvalidTokenException
 from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.TokenExpiredException import TokenExpiryException
 from gateway.dao.UserDaoInterface import UserDaoInterface
+from gateway.dao.UserDaoOrm import UserDaoOrm
 from pojo.Tokens import Tokens
 from utils.JWTTokenTool import generateTokens,refreshAccessToken
 from Exception.UserNotFoundException import UserNotFoundException
+from pojo.User import UserLoginRequest,TokenResponse,UserResponse
 from gateway.Singleton import Singleton,singletonInit
-
+from utils.JWTTokenTool import generateTokens,refreshAccessToken
 class UserService(Singleton):
 
     @singletonInit
     def __init__(self):
-        self.userDao: UserDaoInterface = None
+        self.userDao: UserDaoInterface = UserDaoOrm()
+
+
 
     # def login(self, userLoginForm: UserLoginForm):
     #     try:
@@ -61,6 +65,23 @@ class UserService(Singleton):
     #
     #
     #
+    def login(self, userLoginRequest: UserLoginRequest)-> TokenResponse:
+        try:
+            user: UserResponse | None = self.userDao.checkUser(userLoginRequest)
+        except Exception as e:
+            raise DataBaseException("")
+        if user:
+            token :TokenResponse =  generateTokens(user.userId)
+            try:
+                self.userDao.addRefreshToken(token.refreshToken)
+            except Exception as e:
+                raise DataBaseException("")
+            return token
+        raise UserNotFoundException(userMessage=f"User {userLoginRequest.account} not found")
+
+
+
+
 
 
 
