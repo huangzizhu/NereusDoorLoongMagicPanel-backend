@@ -4,18 +4,29 @@ from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.TokenExpiredException import TokenExpiryException
 from gateway.dao.UserDaoInterface import UserDaoInterface
 from gateway.dao.UserDaoOrm import UserDaoOrm
+from gateway.orm.UserOrm import UserOrm
+from pojo.User import TokenResponse,UserLoginRequest
 from utils.JWTTokenTool import generateTokens,refreshAccessToken
 from Exception.UserNotFoundException import UserNotFoundException
-from pojo.User import UserLoginRequest,TokenResponse,UserResponse
 from gateway.Singleton import Singleton,singletonInit
-from utils.JWTTokenTool import generateTokens,refreshAccessToken
+
 class UserService(Singleton):
 
     @singletonInit
     def __init__(self):
         self.userDao: UserDaoInterface = UserDaoOrm()
 
+    def login(self, userLoginForm: UserLoginRequest) -> TokenResponse:
+        try:
+            user: UserOrm | None = self.userDao.getUserByAccount(userLoginForm.account)
+        except Exception as e:
+            raise DataBaseException(str(e))
 
+        if user is None:
+            raise UserNotFoundException("No user")
+        if user.hashedPassword != userLoginForm.hashedPassword:
+            raise PasswordIncorrectException()
+        return generateTokens(user.uid)
 
     # def login(self, userLoginForm: UserLoginForm):
     #     try:
@@ -64,23 +75,6 @@ class UserService(Singleton):
     #
     #
     #
-    def login(self, userLoginRequest: UserLoginRequest)-> TokenResponse:
-        try:
-            user: UserResponse | None = self.userDao.checkUser(userLoginRequest)
-        except Exception as e:
-            raise DataBaseException("")
-        if user:
-            token :TokenResponse =  generateTokens(user.userId)
-            try:
-                self.userDao.addRefreshToken(token.refreshToken)
-            except Exception as e:
-                raise DataBaseException("")
-            return token
-        raise UserNotFoundException(userMessage=f"User {userLoginRequest.account} not found")
-
-
-
-
 
 
 

@@ -1,10 +1,12 @@
 from fastapi import APIRouter
 
-from gateway.controller.AbstractController import AbstractController
-from pojo.User import UserLoginRequest,TokenResponse
-from gateway.Response import Response,ResponseModel
-from gateway.service.UserService import UserService
+from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
+from gateway.controller.AbstractController import AbstractController
+from gateway.service.UserService import UserService
+from pojo.User import TokenResponse,UserLoginRequest
+
+
 class UserController(AbstractController):
     @singletonInit
     def __init__(self):
@@ -13,11 +15,9 @@ class UserController(AbstractController):
         super().__init__("userController", self.router)
         self.routerSetup()
 
-    def routerSetup (self):
+    def routerSetup(self):
 
         @self.router.post("/login")
-        def login(userLoginRequest: UserLoginRequest) ->ResponseModel:
-            token :TokenResponse = self.userService.login(userLoginRequest)
-            return Response.success(token)
-
-
+        def login(userLoginForm: UserLoginRequest) -> ResponseModel:
+            tokens: TokenResponse = self.userService.login(userLoginForm)
+            return Response.success(tokens)
