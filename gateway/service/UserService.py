@@ -3,7 +3,10 @@ from Exception.InvalidTokenException import InvalidTokenException
 from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.TokenExpiredException import TokenExpiryException
 from gateway.dao.UserDaoInterface import UserDaoInterface
+from gateway.dao.UserDaoOrm import UserDaoOrm
+from gateway.orm.UserOrm import UserOrm
 from pojo.Tokens import Tokens
+from pojo.UserLogin import UserLoginForm
 from utils.JWTTokenTool import generateTokens,refreshAccessToken
 from Exception.UserNotFoundException import UserNotFoundException
 from gateway.Singleton import Singleton,singletonInit
@@ -12,7 +15,19 @@ class UserService(Singleton):
 
     @singletonInit
     def __init__(self):
-        self.userDao: UserDaoInterface = None
+        self.userDao: UserDaoInterface = UserDaoOrm()
+
+    def login(self, userLoginForm: UserLoginForm) -> Tokens:
+        try:
+            user: UserOrm | None = self.userDao.getUserByAccount(userLoginForm.account)
+        except Exception as e:
+            raise DataBaseException(str(e))
+
+        if user is None:
+            raise UserNotFoundException("No user")
+        if user.hashedPassword != userLoginForm.hashedPassword:
+            raise PasswordIncorrectException()
+        return generateTokens(user.uid)
 
     # def login(self, userLoginForm: UserLoginForm):
     #     try:

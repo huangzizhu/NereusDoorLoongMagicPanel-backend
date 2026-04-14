@@ -5,6 +5,7 @@ from typing import List
 from gateway.GlobalInterceptor import GlobalInterceptor
 from gateway.GlobalExceptionHandler import GlobalExceptionHandler
 from gateway.controller.LogController import LogController
+from gateway.controller.UserController import UserController
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -16,6 +17,7 @@ class Application:
 
     def _registerAllController(self):
         self.controllers.append(LogController())
+        self.controllers.append(UserController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()
