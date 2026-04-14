@@ -4,7 +4,6 @@ from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.TokenExpiredException import TokenExpiryException
 from gateway.dao.UserDaoInterface import UserDaoInterface
 from gateway.dao.UserDaoOrm import UserDaoOrm
-from pojo.Tokens import Tokens
 from utils.JWTTokenTool import generateTokens,refreshAccessToken
 from Exception.UserNotFoundException import UserNotFoundException
 from pojo.User import UserLoginRequest,TokenResponse,UserResponse

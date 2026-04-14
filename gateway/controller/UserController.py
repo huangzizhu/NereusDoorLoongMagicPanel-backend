@@ -13,7 +13,7 @@ class UserController(AbstractController):
         super().__init__("userController", self.router)
         self.routerSetup()
 
-    def setup(self):
+    def routerSetup (self):
 
         @self.router.post("/login")
         def login(userLoginRequest: UserLoginRequest) ->ResponseModel:
