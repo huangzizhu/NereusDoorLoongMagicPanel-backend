@@ -35,9 +35,9 @@ class UserDaoOrm(UserDaoInterface):
         try:
             session.add(tokenOrm)
             session.commit()
-        except Exception:
+        except Exception as e:
             session.rollback()
-            raise
+            raise e
         finally:
             session.close()
 

@@ -43,13 +43,20 @@ class GlobalExceptionHandler:
 
     @ExceptionHandler(TokenAuthException)
     async def handleTokenAuthException(self, request: Request, exception: TokenAuthException) -> ResponseModel:
-        return Response.error(msg=exception.userMessage,status_code=40101)#40101表示被未携带Token
+        return Response.custom(code=40101, msg=exception.userMessage,status_code=401)#40101表示被未携带Token
 
+    @ExceptionHandler(AccessTokenExpiryException)
+    async def handleAccessTokenExpiryException(self, request: Request, exception: AccessTokenExpiryException) -> ResponseModel:
+        return Response.custom(code=40102, msg=exception.userMessage,status_code=401)#40102表示访问Token过期
+
+    @ExceptionHandler(RefreshTokenExpiryException)
+    async def handleRefreshTokenExpiryException(self, request: Request, exception: RefreshTokenExpiryException) -> ResponseModel:
+        return Response.custom(code=40103, msg=exception.userMessage,status_code=401)#40103表示刷新Token过期
 
 
     @ExceptionHandler(InvalidTokenException)
     async def handleInvalidTokenError(self, request: Request, exception: InvalidTokenException) -> ResponseModel:
-        return Response.error(msg=exception.userMessage,status_code=40104)#40104表示Token无效
+        return Response.custom(code=40104, msg=exception.userMessage,status_code=401)#40104表示Token无效
 
     @ExceptionHandler(UserNotFoundException)
     async def handleUserNotFoundException(self, request: Request, exception: UserNotFoundException) -> ResponseModel:

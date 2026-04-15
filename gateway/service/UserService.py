@@ -39,7 +39,7 @@ class UserService(Singleton):
             raise DataBaseException(innerMessage="插入用户token失败", userMessage="服务器错误，请稍后再试",cause=e)
         return token
 
-    def logout(self, token: TokenResponse):
+    def logout(self, token: TokenRefreshRequest):
         try:
             countRow: int = self.userDao.deleteTokensByRefreshToken(token.refreshToken)
         except Exception as e:
@@ -72,7 +72,7 @@ class UserService(Singleton):
         except InvalidTokenException as e:
             raise e
         # 生成新的
-        return TokenResponse(accessToken=newAccessToken, refreshToken=tokenRequest.refreshToken)
+        return TokenResponse(accessToken=newAccessToken[0], refreshToken=tokenRequest.refreshToken)
 
 
 

@@ -1,3 +1,4 @@
+from controller.FileController import FileController
 from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ class Application:
     def _registerAllController(self):
         self.controllers.append(LogController())
         self.controllers.append(UserController())
+        self.controllers.append(FileController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()

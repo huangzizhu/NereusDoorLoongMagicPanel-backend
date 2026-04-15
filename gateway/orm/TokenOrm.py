@@ -9,7 +9,7 @@ class TokenOrm(OrmEngine().getBase()):
     __tablename__ = 'RefreshTokens'
 
     tokenId = Column(Integer, primary_key=True, autoincrement=True)
-    userId = Column(Integer, ForeignKey('Users.userId'), nullable=False)
+    userId = Column(Integer, ForeignKey('users.userId'), nullable=False)
     refreshToken = Column(String, nullable=False)
     expireIn = Column(DateTime, nullable=False)
     createdAt = Column(DateTime, default=datetime.utcnow)

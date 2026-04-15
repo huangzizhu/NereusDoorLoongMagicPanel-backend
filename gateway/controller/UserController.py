@@ -23,7 +23,7 @@ class UserController(AbstractController):
             return Response.success(tokens)
 
         @self.router.delete("/logout")
-        def logout(tokens: TokenResponse) -> ResponseModel:
+        def logout(tokens: TokenRefreshRequest) -> ResponseModel:
             self.userService.logout(tokens)
             return Response.success()
 
