@@ -7,6 +7,7 @@ from pojo.Log import Log
 from fastapi import Request, Response, FastAPI
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from pojo.User import TokenResponse
 from gateway.service.LogService import LogService
 from utils.JWTTokenTool import getUserId
 from Exception.TokenAuthException import TokenAuthException
@@ -26,6 +27,16 @@ class GlobalInterceptor(BaseHTTPMiddleware):
         }
 
     async def dispatch(self, request: Request, call_next):
+        if request.method == "DELETE" and request.url.path == "/user/logout":
+            #登出的话从头里面拿token
+            refreshToken = request.headers.get("refreshToken")
+            if refreshToken is None:
+                raise TokenAuthException("refreshToken is required")
+
+            token: TokenResponse = TokenResponse(refreshToken=refreshToken,
+                                                 accessToken="随便都可以")
+            request._body = token.json().encode()
+
         # userId = 0
         # if request.url.path not in self.excludePaths:
         #     try:

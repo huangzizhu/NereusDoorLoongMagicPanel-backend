@@ -1,6 +1,5 @@
 from gateway.app import Application
 app = Application()
-
 fastApiInstance = app.createApp()
 
 if __name__ == "__main__":

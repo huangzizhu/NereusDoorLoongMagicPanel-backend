@@ -6,9 +6,10 @@ from starlette.responses import JSONResponse
 from Exception.GatewayAbstractException import GatewayAbstractException
 from Exception.DataBaseException import DataBaseException
 from Exception.InvalidTokenException import InvalidTokenException
+from Exception.AccessTokenExpiryException import AccessTokenExpiryException
+from Exception.RefreshTokenExpiryException import RefreshTokenExpiryException
 from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.TokenAuthException import TokenAuthException
-from Exception.TokenExpiredException import TokenExpiryException
 from Exception.UserNotFoundException import UserNotFoundException
 from gateway.Response import ResponseModel, Response
 
@@ -42,15 +43,13 @@ class GlobalExceptionHandler:
 
     @ExceptionHandler(TokenAuthException)
     async def handleTokenAuthException(self, request: Request, exception: TokenAuthException) -> ResponseModel:
-        return Response.error(msg=exception.userMessage,status_code=401)
+        return Response.error(msg=exception.userMessage,status_code=40101)#40101表示被未携带Token
 
-    @ExceptionHandler(TokenExpiryException)
-    async def handleTokenExpiryException(self, request: Request, exception: TokenExpiryException) -> ResponseModel:
-        return Response.error(msg=exception.userMessage,status_code=401)
+
 
     @ExceptionHandler(InvalidTokenException)
     async def handleInvalidTokenError(self, request: Request, exception: InvalidTokenException) -> ResponseModel:
-        return Response.error(msg=exception.userMessage,status_code=401)
+        return Response.error(msg=exception.userMessage,status_code=40104)#40104表示Token无效
 
     @ExceptionHandler(UserNotFoundException)
     async def handleUserNotFoundException(self, request: Request, exception: UserNotFoundException) -> ResponseModel:
