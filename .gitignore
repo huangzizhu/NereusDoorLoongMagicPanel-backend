@@ -13,3 +13,8 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# uv缓存
+.uv/
+# 环境变量
+.env

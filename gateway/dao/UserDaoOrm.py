@@ -1,5 +1,7 @@
 from typing import Optional
 
+from sqlalchemy import or_
+
 from gateway.Singleton import singletonInit
 from gateway.dao.UserDaoInterface import UserDaoInterface
 from gateway.orm.OrmEngine import OrmEngine
@@ -13,25 +15,15 @@ class UserDaoOrm(UserDaoInterface):
         self.engine = OrmEngine()
         # 保存 Session 工厂
         self.SessionLocal = self.engine.createSessionFactory()
-        self._ensureDefaultUser()
 
-    def _ensureDefaultUser(self):
-        session = self.SessionLocal()
-        try:
-            user = session.query(UserOrm).filter(UserOrm.account == "admin").first()
-            if user is None:
-                session.add(UserOrm(account="admin", hashedPassword="123456"))
-                session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def getUserByAccount(self, account: str) -> Optional[UserOrm]:
         session = self.SessionLocal()
         try:
-            return session.query(UserOrm).filter(UserOrm.account == account).first()
+            return (session.query(UserOrm).filter(or_(
+                UserOrm.username == account,
+                UserOrm.email == account
+            )).one_or_none())
         except Exception:
             raise
         finally:
