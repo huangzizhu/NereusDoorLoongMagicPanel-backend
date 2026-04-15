@@ -4,6 +4,7 @@ from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
 from gateway.controller.AbstractController import AbstractController
 from service.FileService import FileService
+from pojo.File import ListDirectoryRequest,ListDirectoryResponse
 
 
 class FileController(AbstractController):
@@ -15,4 +16,10 @@ class FileController(AbstractController):
         self.routerSetup()
 
     def routerSetup(self):
-        pass
+
+        @self.router.get("/file/list")
+        def getFileList(listDirectoryRequest: ListDirectoryRequest) -> ResponseModel:
+            list: ListDirectoryResponse = self.fileService.getFileList(listDirectoryRequest)
+            return Response.success(data=list)
+
+

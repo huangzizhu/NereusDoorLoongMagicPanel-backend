@@ -1,8 +1,8 @@
 from typing import Dict, Type, Callable, Coroutine, Any
 from fastapi import Request, FastAPI
 import inspect
-from starlette.responses import JSONResponse
 
+from gateway.Response import ResponseModel, Response
 from Exception.GatewayAbstractException import GatewayAbstractException
 from Exception.DataBaseException import DataBaseException
 from Exception.InvalidTokenException import InvalidTokenException
@@ -11,7 +11,8 @@ from Exception.RefreshTokenExpiryException import RefreshTokenExpiryException
 from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.TokenAuthException import TokenAuthException
 from Exception.UserNotFoundException import UserNotFoundException
-from gateway.Response import ResponseModel, Response
+from Exception.FilePermissionDeniedException import FilePermissionDeniedException
+from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
 
 
 
@@ -68,6 +69,15 @@ class GlobalExceptionHandler:
 
     @ExceptionHandler(DataBaseException)
     async def handleDataBaseException(self, request: Request, exception: DataBaseException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(FilePermissionDeniedException)
+    async def handleFilePermissionDeniedException(self, request: Request, exception: FilePermissionDeniedException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(BuiltinToolExecutionException)
+    async def handleBuiltinToolExecutionException(self, request: Request,
+                                                  exception: BuiltinToolExecutionException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
 
