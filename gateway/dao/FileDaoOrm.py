@@ -1,6 +1,6 @@
 from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.FileDaoInterface import FileDaoInterface
-from orm.OrmEngine import OrmEngine
+from gateway.orm.OrmEngine import OrmEngine
 
 
 class FileDaoOrm(FileDaoInterface):
