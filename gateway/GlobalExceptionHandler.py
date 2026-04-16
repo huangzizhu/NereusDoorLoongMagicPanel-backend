@@ -2,6 +2,7 @@ from typing import Dict, Type, Callable, Coroutine, Any
 from fastapi import Request, FastAPI
 import inspect
 
+from Exception.FileNotFoundException import FileNotFoundException
 from gateway.Response import ResponseModel, Response
 from Exception.GatewayAbstractException import GatewayAbstractException
 from Exception.DataBaseException import DataBaseException
@@ -78,6 +79,11 @@ class GlobalExceptionHandler:
     @ExceptionHandler(BuiltinToolExecutionException)
     async def handleBuiltinToolExecutionException(self, request: Request,
                                                   exception: BuiltinToolExecutionException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(FileNotFoundException)
+    async def handleFileNotFoundException(self, request: Request,
+                                                  exception: FileNotFoundException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
 
