@@ -1,4 +1,4 @@
-from controller.FileController import FileController
+from gateway.controller.FileController import FileController
 from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel
 from fastapi import FastAPI
@@ -8,7 +8,7 @@ from gateway.GlobalExceptionHandler import GlobalExceptionHandler
 from gateway.controller.LogController import LogController
 from gateway.controller.UserController import UserController
 from fastapi.middleware.cors import CORSMiddleware
-
+from gateway.controller.FirewallController import FirewallController
 
 class Application:
 
@@ -20,6 +20,7 @@ class Application:
         self.controllers.append(LogController())
         self.controllers.append(UserController())
         self.controllers.append(FileController())
+        self.controllers.append(FirewallController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()
