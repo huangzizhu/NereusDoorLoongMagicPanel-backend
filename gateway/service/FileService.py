@@ -1,5 +1,5 @@
-from dao.FileDaoInterface import FileDaoInterface
-from dao.FileDaoOrm import FileDaoOrm
+from gateway.dao.FileDaoInterface import FileDaoInterface
+from gateway.dao.FileDaoOrm import FileDaoOrm
 from gateway.Singleton import Singleton,singletonInit
 from pojo.File import ListDirectoryResponse, ListDirectoryRequest
 from pojo.File import FileItem
