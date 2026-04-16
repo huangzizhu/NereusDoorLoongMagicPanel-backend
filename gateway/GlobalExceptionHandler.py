@@ -13,7 +13,7 @@ from Exception.TokenAuthException import TokenAuthException
 from Exception.UserNotFoundException import UserNotFoundException
 from Exception.FilePermissionDeniedException import FilePermissionDeniedException
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
-
+from Exception.SecurityStatusReadException import SecurityStatusReadException
 
 
 
@@ -80,4 +80,6 @@ class GlobalExceptionHandler:
                                                   exception: BuiltinToolExecutionException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
-
+    @ExceptionHandler(SecurityStatusReadException)
+    async def handleSecurityStatusReadException(self, request: Request, exception: SecurityStatusReadException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
