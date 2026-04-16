@@ -64,12 +64,6 @@ class GetFolderTreeRequest(BaseModel):
     rootPath: str = Field(..., description="根路径")
     depth: int = Field(default=1, ge=1, description="递归深度")
 
-class UploadFileRequest(BaseModel):
-    # 注意：实际文件上传中，file通常由FastAPI直接处理，这里只定义业务参数
-    destinationPath: str = Field(..., description="目标存储路径")
-
-class DownloadFileRequest(BaseModel):
-    filePath: str = Field(..., description="文件路径")
 
 class DeletePathRequest(BaseModel):
     path: str = Field(..., description="要删除的路径")
@@ -88,6 +82,15 @@ class SearchFilesRequest(BaseModel):
     path: str = Field(..., description="搜索起始路径")
     expression: str = Field(..., description="搜索表达式/关键字")
 
+class CreateFileRequest(BaseModel):
+    path: str = Field(..., description="文件路径")
+
+class RenameOrMoveFileRequest(BaseModel):
+    sourcePath: str = Field(..., description="原文件路径")
+    destinationPath: str = Field(..., description="新文件路径")
+
+class DownloadFileRequest(BaseModel):
+    filePath: str = Field(..., description="文件路径")
 
 # ==========================================
 # 4. 响应模型

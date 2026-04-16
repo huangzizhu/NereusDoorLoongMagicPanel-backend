@@ -2,7 +2,9 @@ from typing import Dict, Type, Callable, Coroutine, Any
 from fastapi import Request, FastAPI
 import inspect
 
+from Exception.FileAlreadyExistException import FileAlreadyExistException
 from Exception.FileNotFoundException import FileNotFoundException
+from Exception.FileTypeException import FileTypeException
 from gateway.Response import ResponseModel, Response
 from Exception.GatewayAbstractException import GatewayAbstractException
 from Exception.DataBaseException import DataBaseException
@@ -85,5 +87,16 @@ class GlobalExceptionHandler:
     async def handleFileNotFoundException(self, request: Request,
                                                   exception: FileNotFoundException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(FileAlreadyExistException)
+    async def handleFileAlreadyExistException(self, request: Request,
+                                          exception: FileAlreadyExistException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(FileTypeException)
+    async def handleFileTypeException(self, request: Request,
+                                          exception: FileTypeException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+    
 
 

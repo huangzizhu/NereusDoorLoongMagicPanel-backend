@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter,UploadFile, File, Form
+from ndlmpanel_agent import FileOperationResult
+from fastapi.responses import FileResponse
 
 from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
@@ -6,9 +8,10 @@ from gateway.controller.AbstractController import AbstractController
 from service.FileService import FileService
 from pojo.File import (ListDirectoryRequest, ListDirectoryResponse
 , GetFolderTreeRequest, GetFolderTreeResponse, DeletePathRequest
-, BatchDeletePathRequest, UpdatePermissionsRequest)
+, BatchDeletePathRequest, UpdatePermissionsRequest, GetPermissionsRequest
+, CreateFileRequest, RenameOrMoveFileRequest, DownloadFileRequest)
 from pojo.Common import ListResponse
-from ndlmpanel_agent.models.ops.filesystem.filesystem_models import PermissionChangeResult
+from ndlmpanel_agent.models.ops.filesystem.filesystem_models import PermissionChangeResult,FileOperationResult
 
 class FileController(AbstractController):
     @singletonInit
@@ -30,6 +33,11 @@ class FileController(AbstractController):
             res: GetFolderTreeResponse = self.fileService.getFileTree(treeRequest)
             return Response.success(data=res)
 
+        @self.router.post("")
+        def createFile(fileRequest: CreateFileRequest) -> ResponseModel:
+            res: FileOperationResult = self.fileService.createFile(fileRequest.path)
+            return Response.success(res)
+
         @self.router.delete("")
         def deletePath(deleteRequest: DeletePathRequest) -> ResponseModel:
             self.fileService.deletePath(deleteRequest.path)
@@ -44,6 +52,34 @@ class FileController(AbstractController):
         def updatePermissions(updateRequest: UpdatePermissionsRequest) -> ResponseModel:
             res: PermissionChangeResult = self.fileService.updatePermissions(updateRequest)
             return Response.success(res)
+
+        @self.router.get("/permissions")
+        def getFilePermissions(permissionsRequest: GetPermissionsRequest) -> ResponseModel:
+            res = self.fileService.getFilePermissions(permissionsRequest.path)
+            return Response.success(res)
+
+        @self.router.put("")
+        def renameOrMoveFile(fileRequest: RenameOrMoveFileRequest) -> ResponseModel:
+            res: FileOperationResult = self.fileService.renameOrMoveFile(fileRequest)
+            return Response.success(res)
+
+        @self.router.post("/dir")
+        def createDir(fileRequest: CreateFileRequest) -> ResponseModel:
+            res: FileOperationResult = self.fileService.createDir(fileRequest.path)
+            return Response.success(res)
+
+        @self.router.post("/upload")
+        async def uploadFile(
+                destinationPath: str = Form(...),  # 接收字符串参数
+                file: UploadFile = File(...)  # 接收文件
+        ) -> ResponseModel:
+            res: FileOperationResult = await self.fileService.uploadFile(destinationPath, file)
+            return Response.success(res)
+
+        @self.router.get("/download")
+        def downloadFile(request: DownloadFileRequest):
+            fileResponse: FileResponse = self.fileService.downloadFile(request.filePath)
+            return fileResponse
 
 
 
