@@ -8,8 +8,8 @@ from Exception.FileAlreadyExistException import FileAlreadyExistException
 from Exception.FileNotFoundException import FileNotFoundException
 from Exception.FileTypeException import FileTypeException
 from Exception.GatewayAbstractException import GatewayAbstractException
-from dao.FileDaoInterface import FileDaoInterface
-from dao.FileDaoOrm import FileDaoOrm
+from gateway.dao.FileDaoInterface import FileDaoInterface
+from gateway.dao.FileDaoOrm import FileDaoOrm
 from gateway.Singleton import Singleton,singletonInit
 from pojo.File import (FileItem,ListDirectoryResponse, ListDirectoryRequest
 , GetFolderTreeRequest, GetFolderTreeResponse,
