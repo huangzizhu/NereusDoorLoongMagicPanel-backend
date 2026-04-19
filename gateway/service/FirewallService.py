@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import List
 import re
 import subprocess
-from pojo.FireWall import PortRuleCreate,PortRule
+from pojo.FireWall import PortRuleCreate,PortRule, SshConfig
+from pathlib import Path
 from ndlmpanel_agent import (
     getFirewallStatus,
     manageSystemService,
@@ -65,6 +66,78 @@ class FirewallService(Singleton):
             firewallEnabled=self.readComputerFirewallEnabled(),
             sshServiceEnabled=self.readSshServiceEnabled(),
         )
+
+    def getSshConfig(self) -> SshConfig:
+        # 先读取主配置文件，不存在时再尝试通配目录
+        mainConfigPath = Path("/etc/ssh/sshd_config")
+        configFiles: List[Path] = []
+
+        if mainConfigPath.exists():
+            configFiles.append(mainConfigPath)
+            parsed = self._parseSshConfigFiles(configFiles)
+            includeGlobs = parsed.get("include", [])
+
+            for pattern in includeGlobs:
+                for matchedPath in Path("/").glob(pattern.lstrip("/")):
+                    if matchedPath.is_file():
+                        configFiles.append(matchedPath)
+        else:
+            fallbackDir = Path("/etc/ssh/sshd_config.d")
+            if fallbackDir.exists() and fallbackDir.is_dir():
+                configFiles.extend(sorted(fallbackDir.glob("*.conf")))
+
+        if not configFiles:
+            raise SecurityStatusReadException(
+                innerMessage="未找到 sshd 配置文件",
+                userMessage="读取SSH配置失败",
+            )
+
+        try:
+            parsed = self._parseSshConfigFiles(configFiles)
+
+            sshPort = self._safeInt(parsed.get("port", ["22"])[-1], default=22)
+            permitRootLogin = parsed.get("permitrootlogin", ["no"])[-1]
+            passwordAuthentication = parsed.get("passwordauthentication", ["yes"])[-1]
+            allowUsers = parsed.get("allowusers", [])
+            allowGroups = parsed.get("allowgroups", [])
+            listenAddress = parsed.get("listenaddress", ["0.0.0.0"])
+            protocol = self._safeInt(parsed.get("protocol", ["2"])[-1], default=2)
+            loginGraceTime = self._parseDurationToSeconds(parsed.get("logingracetime", ["120"])[-1], default=120)
+            maxAuthTries = self._safeInt(parsed.get("maxauthtries", ["6"])[-1], default=6)
+
+            statSource = configFiles[0]
+            fileStat = statSource.stat()
+            updatedTime = datetime.fromtimestamp(fileStat.st_mtime)
+            createdTime = datetime.fromtimestamp(fileStat.st_ctime)
+
+            return SshConfig(
+                id=1,
+                port=sshPort,
+                permitRootLogin=permitRootLogin,
+                passwordAuthentication=passwordAuthentication,
+                allowUsers=allowUsers,
+                allowGroups=allowGroups,
+                listenAddress=listenAddress,
+                protocol=protocol,
+                loginGraceTime=loginGraceTime,
+                maxAuthTries=maxAuthTries,
+                createdTime=createdTime,
+                updatedTime=updatedTime,
+            )
+        except SecurityStatusReadException:
+            raise
+        except PermissionError as e:
+            raise SecurityStatusReadException(
+                innerMessage=str(e),
+                userMessage="读取SSH配置失败",
+                cause=e,
+            )
+        except Exception as e:
+            raise SecurityStatusReadException(
+                innerMessage=str(e),
+                userMessage="读取SSH配置失败",
+                cause=e,
+            )
 
     def updateSecuritySwitchState(self, updateRequest: SecuritySwitchUpdate) -> SecuritySwitchState:
         if updateRequest.sshServiceEnabled is not None:
@@ -269,3 +342,58 @@ class FirewallService(Singleton):
     def _nextRuleId(self, index: int) -> int:
         # 组员库没有规则ID，先用列表序号模拟
         return index + 1
+
+    def _parseSshConfigFiles(self, filePaths: List[Path]) -> dict[str, List[str]]:
+        parsed: dict[str, List[str]] = {}
+
+        for path in filePaths:
+            if not path.exists() or not path.is_file():
+                continue
+
+            for rawLine in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = rawLine.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                noComment = line.split("#", 1)[0].strip()
+                if not noComment:
+                    continue
+
+                parts = noComment.split(None, 1)
+                if len(parts) < 2:
+                    continue
+
+                key = parts[0].strip().lower()
+                value = parts[1].strip()
+                if not value:
+                    continue
+
+                if key in ["allowusers", "allowgroups", "listenaddress", "include"]:
+                    items = [item for item in value.split() if item]
+                    parsed.setdefault(key, []).extend(items)
+                else:
+                    parsed.setdefault(key, []).append(value)
+
+        return parsed
+
+    def _safeInt(self, value: str, default: int) -> int:
+        try:
+            return int(str(value).strip())
+        except Exception:
+            return default
+
+    def _parseDurationToSeconds(self, value: str, default: int) -> int:
+        text = str(value).strip().lower()
+        matched = re.match(r"^(\d+)([smhd]?)$", text)
+        if not matched:
+            return default
+
+        amount = int(matched.group(1))
+        unit = matched.group(2)
+        if unit == "m":
+            return amount * 60
+        if unit == "h":
+            return amount * 3600
+        if unit == "d":
+            return amount * 86400
+        return amount
