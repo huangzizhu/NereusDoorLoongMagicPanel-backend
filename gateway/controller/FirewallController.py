@@ -3,7 +3,7 @@ from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
 from gateway.service.FirewallService import FirewallService
-from pojo.FireWall import SecuritySwitchState,SecuritySwitchUpdate
+from pojo.FireWall import SecuritySwitchState,SecuritySwitchUpdate,PortRuleCreate,PortRule
 class FirewallController(AbstractController):
     @singletonInit
     def __init__(self):
@@ -25,3 +25,23 @@ class FirewallController(AbstractController):
             state: SecuritySwitchState = self.firewallService.updateSecuritySwitchState(request)
             return Response.success(data=state.model_dump())
         
+        @self.router.post("/port-rules")
+        def createPortRule(rule:PortRuleCreate) -> ResponseModel:
+            self.firewallService.createPortRule(rule)
+            rules = self.firewallService.getPortRules()
+            return Response.success(
+                data={
+                    "total":len(rules),
+                    "list":[r.model_dump() for r in rules],
+                }
+            )
+        
+        @self.router.get("/port-rules")
+        def getPortRules() -> ResponseModel:
+            rules = self.firewallService.getPortRules()
+            return Response.success(
+                data={
+                    "total":len(rules),
+                    "list":[rule.model_dump() for rule in rules],
+                }
+            )
