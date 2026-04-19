@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
 from gateway.controller.AbstractController import AbstractController
-from service.FileService import FileService
+from gateway.service.FileService import FileService
 from pojo.File import (ListDirectoryRequest, ListDirectoryResponse
 , GetFolderTreeRequest, GetFolderTreeResponse, DeletePathRequest
 , BatchDeletePathRequest, UpdatePermissionsRequest, GetPermissionsRequest

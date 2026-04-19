@@ -17,7 +17,7 @@ from Exception.UserNotFoundException import UserNotFoundException
 from Exception.FilePermissionDeniedException import FilePermissionDeniedException
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
 from Exception.SecurityStatusReadException import SecurityStatusReadException
-
+from Exception.InvalidParamException import InvalidParamException
 
 
 def ExceptionHandler(exception: Type[GatewayAbstractException]):
@@ -99,6 +99,11 @@ class GlobalExceptionHandler:
     @ExceptionHandler(FileTypeException)
     async def handleFileTypeException(self, request: Request,
                                           exception: FileTypeException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(InvalidParamException)
+    async def handleInvalidParamException(self, request: Request,
+                                          exception: InvalidParamException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
 
