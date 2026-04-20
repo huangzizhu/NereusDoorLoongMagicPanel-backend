@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List
 import re
 import subprocess
-from pojo.FireWall import PortRuleCreate,PortRule, SshConfig
+from pojo.FireWall import PortRuleCreate,PortRule, SshConfig,SshConfigUpdate
 from pathlib import Path
 from ndlmpanel_agent import (
     getFirewallStatus,
@@ -17,6 +17,8 @@ from ndlmpanel_agent.exceptions.tool_exceptions import ToolExecutionException, P
 from Exception.SecurityStatusReadException import SecurityStatusReadException
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
 
+
+#测试
 class FirewallService(Singleton):
     @singletonInit
     def __init__(self):
@@ -138,6 +140,84 @@ class FirewallService(Singleton):
             raise SecurityStatusReadException(
                 innerMessage=str(e),
                 userMessage="读取SSH配置失败",
+                cause=e,
+            )
+
+
+
+    def updateSshConfig(self,updateRequest:SshConfigUpdate)->SshConfig:
+        configPath = Path("/etc/ssh/sshd_config")
+        if not configPath.exists():
+            raise SecurityStatusReadException(
+                innerMessage="未找到 sshd 配置文件",
+                userMessage="更新SSH配置失败",
+            )
+
+        currentConfig = self.getSshConfig()
+        self._validateSshConfigUpdate(updateRequest)
+        mergedConfig = {
+            "Port": updateRequest.port if updateRequest.port is not None else currentConfig.port,
+            "PermitRootLogin": updateRequest.permitRootLogin if updateRequest.permitRootLogin is not None else currentConfig.permitRootLogin,
+            "PasswordAuthentication": updateRequest.passwordAuthentication if updateRequest.passwordAuthentication is not None else currentConfig.passwordAuthentication,
+            "AllowUsers": updateRequest.allowUsers if updateRequest.allowUsers is not None else currentConfig.allowUsers,
+            "AllowGroups": updateRequest.allowGroups if updateRequest.allowGroups is not None else currentConfig.allowGroups,
+            "ListenAddress": updateRequest.listenAddress if updateRequest.listenAddress is not None else currentConfig.listenAddress,
+            "Protocol": updateRequest.protocol if updateRequest.protocol is not None else currentConfig.protocol,
+            "LoginGraceTime": updateRequest.loginGraceTime if updateRequest.loginGraceTime is not None else currentConfig.loginGraceTime,
+            "MaxAuthTries": updateRequest.maxAuthTries if updateRequest.maxAuthTries is not None else currentConfig.maxAuthTries,
+        }
+
+        originalContent = configPath.read_text(encoding="utf-8", errors="ignore")
+        contentWithoutManaged = self._removeManagedSshBlock(originalContent)
+        managedBlock = self._bulidMangedSshBlock(mergedConfig)
+        newContent = contentWithoutManaged.rstrip() + "\n\n" + managedBlock + "\n"
+
+        try:
+            try:
+                configPath.write_text(newContent, encoding="utf-8")
+            except PermissionError:
+                writeResult = subprocess.run(
+                    ["sudo", "-n", "tee", str(configPath)],
+                    input=newContent,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if writeResult.returncode != 0:
+                    raise SecurityStatusReadException(
+                        innerMessage=writeResult.stderr or writeResult.stdout or "写入sshd配置失败",
+                        userMessage="更新SSH配置失败",
+                    )
+
+            result = subprocess.run(
+                ["sudo", "-n", "sshd", "-t"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                try:
+                    configPath.write_text(originalContent, encoding="utf-8")
+                except PermissionError:
+                    subprocess.run(
+                        ["sudo", "-n", "tee", str(configPath)],
+                        input=originalContent,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                raise SecurityStatusReadException(
+                    innerMessage=result.stderr or result.stdout or "sshd语法检查失败",
+                    userMessage="更新SSH配置失败",
+                )
+
+            return self.getSshConfig()
+        except SecurityStatusReadException:
+            raise
+        except Exception as e:
+            raise SecurityStatusReadException(
+                innerMessage=str(e),
+                userMessage="更新SSH配置失败",
                 cause=e,
             )
 
@@ -399,3 +479,77 @@ class FirewallService(Singleton):
         if unit == "d":
             return amount * 86400
         return amount
+    
+    def _validateSshConfigUpdate(self,updateRequest:SshConfigUpdate)->None:
+        if updateRequest.port is not None and not (1<=updateRequest.port<=65535):
+            raise SecurityStatusReadException(
+                innerMessage=f"非法端口:{updateRequest.port}",
+                userMessage="更新SSH配置失败",
+            )
+        if updateRequest.protocol is not None and updateRequest.protocol not in [2]:
+            raise SecurityStatusReadException(
+            innerMessage=f"非法协议版本: {updateRequest.protocol}",
+            userMessage="更新SSH配置失败",
+        )
+        if updateRequest.permitRootLogin is not None and updateRequest.permitRootLogin not in [
+            "yes",
+            "no",
+            "prohibit-password",
+            "without-password",
+        ]:
+            raise SecurityStatusReadException(
+                innerMessage=f"非法 PermitRootLogin: {updateRequest.permitRootLogin}",
+                userMessage="更新SSH配置失败",
+            )
+
+        if updateRequest.passwordAuthentication is not None and updateRequest.passwordAuthentication not in [
+            "yes",
+            "no",
+        ]:
+            raise SecurityStatusReadException(
+                innerMessage=f"非法 PasswordAuthentication: {updateRequest.passwordAuthentication}",
+                userMessage="更新SSH配置失败",
+            )
+
+        if updateRequest.loginGraceTime is not None and updateRequest.loginGraceTime <= 0:
+            raise SecurityStatusReadException(
+                innerMessage=f"非法 LoginGraceTime: {updateRequest.loginGraceTime}",
+                userMessage="更新SSH配置失败",
+            )
+
+        if updateRequest.maxAuthTries is not None and updateRequest.maxAuthTries <= 0:
+            raise SecurityStatusReadException(
+                innerMessage=f"非法 MaxAuthTries: {updateRequest.maxAuthTries}",
+                userMessage="更新SSH配置失败",
+            )
+        
+
+
+    def _bulidMangedSshBlock(self,mergedConfig:dict) -> str:
+        allowUsers = mergedConfig["AllowUsers"]
+        allowGroups = mergedConfig["AllowGroups"]
+        listenAddress = mergedConfig["ListenAddress"]
+
+        lines = [
+            "# PANEL_MANAGED_BEGIN",
+            f"Port {mergedConfig['Port']}",
+            f"PermitRootLogin {mergedConfig['PermitRootLogin']}",
+            f"PasswordAuthentication {mergedConfig['PasswordAuthentication']}",
+            f"Protocol {mergedConfig['Protocol']}",
+            f"LoginGraceTime {mergedConfig['LoginGraceTime']}",
+            f"MaxAuthTries {mergedConfig['MaxAuthTries']}",
+        ]
+
+        if allowUsers:
+            lines.append(f"AllowUsers {' '.join(allowUsers)}")
+        if allowGroups:
+            lines.append(f"AllowGroups {' '.join(allowGroups)}")
+        if listenAddress:
+            lines.append(f"ListenAddress {' '.join(listenAddress)}")
+
+        lines.append("# PANEL_MANAGED_END")
+        return "\n".join(lines)
+    
+    def _removeManagedSshBlock(self,content:str) ->str:
+        pattern = r"# PANEL_MANAGED_BEGIN.*?# PANEL_MANAGED_END\s*"
+        return re.sub(pattern,"",content,flags=re.S)
