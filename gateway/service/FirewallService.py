@@ -86,11 +86,13 @@ class FirewallService(Singleton):
             if fallbackDir.exists() and fallbackDir.is_dir():
                 configFiles.extend(sorted(fallbackDir.glob("*.conf")))
 
+
+
         if not configFiles:
             raise SecurityStatusReadException(
                 innerMessage="未找到 sshd 配置文件",
                 userMessage="读取SSH配置失败",
-            )
+            ) 
 
         try:
             parsed = self._parseSshConfigFiles(configFiles)
