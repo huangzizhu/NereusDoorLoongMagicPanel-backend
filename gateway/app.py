@@ -1,3 +1,4 @@
+from controller.ConfigController import ConfigController
 from controller.SystemInfoController import SystemInfoController
 from gateway.controller.FileController import FileController
 from gateway.controller.AbstractController import AbstractController
@@ -23,6 +24,7 @@ class Application:
         self.controllers.append(FileController())
         self.controllers.append(FirewallController())
         self.controllers.append(SystemInfoController())
+        self.controllers.append(ConfigController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()

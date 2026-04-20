@@ -25,12 +25,23 @@ class ApiCredentialCreate(ApiCredentialBase):
 
 # === Update 模型：更新时需要的字段（所有字段可选）===
 class ApiCredentialUpdate(BaseModel):
+    credentialId: int = Field(...,ge=1)
     name: Optional[str] = Field(None, max_length=50)
     baseUrl: Optional[str] = Field(None, max_length=255)
     isActive: Optional[bool] = None
     description: Optional[str] = Field(None, max_length=255)
     quotaLimit: Optional[float] = Field(None, ge=0)
 
+# 从数据库到响应模型的中间模型
+class ApiCredentialOrm2pydantic(ApiCredentialBase):
+    credentialId: int
+    apiKey: str = Field(..., min_length=10, max_length=255, description="完整的API Key")
+    usedQuota: float = Field(default=0.0, description="已使用额度")
+    expireAt: Optional[datetime] = Field(None, description="过期时间")
+    lastUsedAt: Optional[datetime] = Field(None, description="最后调用时间")
+    createTime: datetime
+    updateTime: datetime
+    model_config = ConfigDict(from_attributes=True)
 # === Response 模型：输出给前端的字段（注意排除敏感字段 apiKey）===
 class ApiCredentialResponse(ApiCredentialBase):
     credentialId: int
