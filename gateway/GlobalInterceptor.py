@@ -2,11 +2,13 @@ import json
 import time
 from datetime import datetime
 
+from starlette.datastructures import MutableHeaders
 
 from pojo.Log import Log
 from fastapi import Request, Response, FastAPI
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from pojo.User import TokenResponse
 from gateway.service.LogService import LogService
 from utils.JWTTokenTool import getUserId
 from Exception.TokenAuthException import TokenAuthException
@@ -26,6 +28,7 @@ class GlobalInterceptor(BaseHTTPMiddleware):
         }
 
     async def dispatch(self, request: Request, call_next):
+
         # userId = 0
         # if request.url.path not in self.excludePaths:
         #     try:

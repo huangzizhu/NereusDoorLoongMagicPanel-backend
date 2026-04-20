@@ -1,7 +1,7 @@
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
-
+from pojo.Common import PageSearchRequest,ListResponse
 # ==========================================
 # 1. 通用实体模型
 # ==========================================
@@ -10,7 +10,7 @@ class FileItem(BaseModel):
     """文件条目模型"""
     name: str = Field(..., description="文件名")
     path: str = Field(..., description="文件路径")
-    type: int = Field(..., ge=0, le=2, description="类型: 0=文件夹, 1=文本文件, 2=二进制文件")
+    type: int = Field(..., ge=0, le=3, description="类型: 0=文件夹, 1=文本文件, 2=二进制文件, 3其他")
     size: int = Field(default=0, ge=0, description="文件大小")
     createdTime: datetime = Field(..., description="创建时间")
     modifiedTime: datetime = Field(..., description="修改时间")
@@ -56,21 +56,14 @@ class FileOperationLog(FileOperationLogBase):
 # 3. 请求模型
 # ==========================================
 
-class ListDirectoryRequest(BaseModel):
+class ListDirectoryRequest(PageSearchRequest):
     path: str = Field(..., description="目标路径")
-    page: int = Field(default=1, ge=1, description="页码")
-    pageSize: int = Field(default=20, ge=1, le=100, description="每页数量")
+
 
 class GetFolderTreeRequest(BaseModel):
     rootPath: str = Field(..., description="根路径")
     depth: int = Field(default=1, ge=1, description="递归深度")
 
-class UploadFileRequest(BaseModel):
-    # 注意：实际文件上传中，file通常由FastAPI直接处理，这里只定义业务参数
-    destinationPath: str = Field(..., description="目标存储路径")
-
-class DownloadFileRequest(BaseModel):
-    filePath: str = Field(..., description="文件路径")
 
 class DeletePathRequest(BaseModel):
     path: str = Field(..., description="要删除的路径")
@@ -89,15 +82,23 @@ class SearchFilesRequest(BaseModel):
     path: str = Field(..., description="搜索起始路径")
     expression: str = Field(..., description="搜索表达式/关键字")
 
+class CreateFileRequest(BaseModel):
+    path: str = Field(..., description="文件路径")
+
+class RenameOrMoveFileRequest(BaseModel):
+    sourcePath: str = Field(..., description="原文件路径")
+    destinationPath: str = Field(..., description="新文件路径")
+
+class DownloadFileRequest(BaseModel):
+    filePath: str = Field(..., description="文件路径")
 
 # ==========================================
 # 4. 响应模型
 # ==========================================
 
-class ListDirectoryResponse(BaseModel):
-    total: int = Field(..., description="总数")
+class ListDirectoryResponse(ListResponse):
     page: int = Field(..., description="当前页")
-    fileList: List[FileItem] = Field(default_factory=list, description="文件列表")
+
 
 class GetFolderTreeResponse(BaseModel):
     folderTree: List[FolderNode] = Field(default_factory=list, description="文件夹树")

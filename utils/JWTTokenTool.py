@@ -2,6 +2,8 @@ import jwt
 import datetime
 from pojo.User import TokenResponse
 from Exception.TokenExpiredException import TokenExpiryException
+from Exception.AccessTokenExpiryException import AccessTokenExpiryException
+from Exception.RefreshTokenExpiryException import RefreshTokenExpiryException
 from Exception.InvalidTokenException import InvalidTokenException
 
 # 秘钥（密钥用来加密和解密JWT）
@@ -12,7 +14,7 @@ def getUserId(accessToken) -> int:
         decodedAccessToken = jwt.decode(accessToken, SECRET_KEY, algorithms=["HS256"])
         return decodedAccessToken["userId"]
     except jwt.ExpiredSignatureError:
-        raise TokenExpiryException(userMessage="token expired")
+        raise AccessTokenExpiryException(userMessage="token expired")
     except jwt.InvalidTokenError:
         raise InvalidTokenException(userMessage="invalid token")
 # 生成 Access Token 和 Refresh Token 的函数
@@ -43,6 +45,6 @@ def refreshAccessToken(refreshToken):
 
         return newAccessToken,userId
     except jwt.ExpiredSignatureError:
-        raise TokenExpiryException(userMessage="token expired")
+        raise RefreshTokenExpiryException(userMessage="token已过期")
     except jwt.InvalidTokenError:
-        raise InvalidTokenException(userMessage="invalid token")
+        raise InvalidTokenException(userMessage="token非法")

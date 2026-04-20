@@ -4,7 +4,7 @@ from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
 from gateway.controller.AbstractController import AbstractController
 from gateway.service.UserService import UserService
-from pojo.User import TokenResponse,UserLoginRequest
+from pojo.User import TokenResponse,UserLoginRequest,TokenRefreshRequest
 
 
 class UserController(AbstractController):
@@ -21,3 +21,14 @@ class UserController(AbstractController):
         def login(userLoginForm: UserLoginRequest) -> ResponseModel:
             tokens: TokenResponse = self.userService.login(userLoginForm)
             return Response.success(tokens)
+
+        @self.router.delete("/logout")
+        def logout(tokens: TokenRefreshRequest) -> ResponseModel:
+            self.userService.logout(tokens)
+            return Response.success()
+
+        @self.router.get("/refresh")
+        def refresh(tokenRequest: TokenRefreshRequest) -> ResponseModel:
+            token: TokenResponse = self.userService.refreshToken(tokenRequest)
+            return Response.success(token)
+
