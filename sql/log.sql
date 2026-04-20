@@ -9,5 +9,5 @@ CREATE TABLE logs (
     executionTime REAL,                            -- 执行时长（单位：秒）
     errorMessage TEXT,                             -- 错误信息（如果有的话）
     requestPath TEXT NOT NULL,                     -- 请求路径
-    httpMethod TEXT NOT NULL,                      -- HTTP 方法（GET, POST, etc.）
+    httpMethod TEXT NOT NULL                      -- HTTP 方法（GET, POST, etc.）
 );

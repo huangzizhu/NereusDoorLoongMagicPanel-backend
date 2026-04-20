@@ -12,7 +12,6 @@ class SystemHealthOrm(OrmEngine().getBase()):
     cpuUsage = Column(Float, nullable=False, comment='CPU使用率')
     memoryUsage = Column(Float, nullable=False, comment='内存使用率')
     diskUsage = Column(Float, nullable=False, comment='磁盘使用率')
-    networkLatency = Column(Float, nullable=False, comment='网络延迟')
     healthScore = Column(Integer, nullable=False, comment='健康评分')
     # 0:正常 1:警告 2:异常
     status = Column(Integer, nullable=False, default=0, comment='状态')

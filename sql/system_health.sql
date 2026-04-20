@@ -4,7 +4,6 @@ CREATE TABLE system_health (
     cpuUsage REAL NOT NULL,
     memoryUsage REAL NOT NULL,
     diskUsage REAL NOT NULL,
-    networkLatency REAL NOT NULL,
     healthScore INTEGER NOT NULL,
     status INTEGER NOT NULL DEFAULT 0, -- 0:正常 1:警告 2:异常
     createTime DATETIME NOT NULL DEFAULT (datetime('now', 'localtime'))

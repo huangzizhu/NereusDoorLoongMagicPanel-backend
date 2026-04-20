@@ -1,6 +1,10 @@
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
+from ndlmpanel_agent.models.ops.monitor.system_monitor_models import (CpuInfo
+,MemoryInfo,DiskPartitionInfo,GpuInfo,NetworkInterfaceInfo)
+from typing import List
+from pojo.Common import PageSearchRequest
 
 # ==========================================
 # 1. SystemHealth Schemas
@@ -11,7 +15,6 @@ class SystemHealthBase(BaseModel):
     cpuUsage: float = Field(..., ge=0, le=100, description="CPU使用率")
     memoryUsage: float = Field(..., ge=0, le=100, description="内存使用率")
     diskUsage: float = Field(..., ge=0, le=100, description="磁盘使用率")
-    networkLatency: float = Field(..., description="网络延迟")
     healthScore: int = Field(..., ge=0, le=100, description="健康评分")
     status: int = Field(..., ge=0, le=2, description="状态: 0正常 1警告 2异常")
 
@@ -23,7 +26,12 @@ class SystemHealth(SystemHealthBase):
 
     model_config = ConfigDict(from_attributes=True)
 
-
+class SystemHealthResponse(SystemHealthBase):
+    cpuInfo: CpuInfo = Field(..., description="CPU详细信息对象")
+    memoryInfo: MemoryInfo = Field(..., description="内存详细信息对象")
+    gpuInfos: Optional[List[GpuInfo]] = Field(None,description="gpu，如果有")
+    diskInfos: List[DiskPartitionInfo] = Field(default_factory=list, description="磁盘详细信息列表")
+    networkInfos: List[NetworkInterfaceInfo] = Field(...,description="网卡信息")
 # ==========================================
 # 2. AlertEvent Schemas
 # ==========================================
@@ -63,8 +71,6 @@ class AgentStatus(AgentStatusBase):
 class SystemHealthQuery(BaseModel):
     """SSE 请求参数"""
     clientTimestamp: int = Field(..., description="客户端时间戳，用于计算延迟")
-class AlertQuery(BaseModel):
+class AlertQuery(PageSearchRequest):
     """告警列表查询参数"""
-    page: int = Field(1, ge=1, description="页码")
-    pageSize: int = Field(20, ge=1, le=100, description="每页数量")
     excludeProcessed: bool = Field(False, description="是否排除已处理的告警")

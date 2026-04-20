@@ -117,7 +117,16 @@ class SecuritySwitchState(BaseModel):
 
 
 class SecuritySwitchUpdate(BaseModel):
-    firewallEnabled: Optional[bool] = None
-    sshServiceEnabled: Optional[bool] = None
+    firewallEnabled: Optional[bool] = Field(None, description="防火墙是否开启")
+    sshServiceEnabled: Optional[bool] = Field(None, description="SSH服务是否开启")
 
 
+class SecuritySwitchOperationResult(BaseModel):
+    enabled: Optional[bool] = Field(None, description="更新后的开关状态")
+    updateSuccess: bool = Field(..., description="是否更新成功")
+    message: str = Field(..., description="更新结果描述")
+
+
+class SecuritySwitchUpdateResult(BaseModel):
+    firewall: SecuritySwitchOperationResult = Field(..., description="防火墙更新结果")
+    sshService: SecuritySwitchOperationResult = Field(..., description="SSH服务更新结果")

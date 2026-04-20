@@ -30,3 +30,10 @@ class Response:
             msg = "error"
         assert isinstance(msg, str)
         return ResponseModel(code=0, msg=msg, data=data, status_code=status_code)
+
+    @staticmethod
+    def custom(code: int = 1, data: Optional[Any] = None, msg: str | None = None, status_code: int = 200) -> ResponseModel:
+        if msg is None:
+            msg = "null"
+        assert isinstance(msg, str)
+        return ResponseModel(code=code, msg=msg, data=data, status_code=status_code)
