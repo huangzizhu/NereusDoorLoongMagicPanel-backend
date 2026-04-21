@@ -1,8 +1,8 @@
 from sqlalchemy import func
 from typing import List
-from Singleton import singletonInit
+from gateway.Singleton import singletonInit
 from gateway.dao.SystemInfoDaoInterface import SystemInfoDaoInterface
-from orm.OrmEngine import OrmEngine
+from gateway.orm.OrmEngine import OrmEngine
 from pojo.PanelInfo import AlertEvent,AlertQuery
 from gateway.orm.PanelInfoOrm import AlertEventOrm
 

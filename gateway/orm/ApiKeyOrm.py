@@ -23,7 +23,6 @@ class ApiCredentialOrm(OrmEngine().getBase()):
 
     # 关键安全字段： apiKey 完整存储，需要加密（代码层面处理，此处仅定义存储结构）
     apiKey = Column(String(255), nullable=False, comment="API Key密文")
-    maskedKey = Column(String(30), nullable=True, comment="脱敏展示Key")
 
     baseUrl = Column(String(255), nullable=True, comment="Base URL")
     isActive = Column(Boolean, default=True, comment="是否启用")

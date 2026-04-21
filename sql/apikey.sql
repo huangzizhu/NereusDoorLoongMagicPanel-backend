@@ -4,7 +4,6 @@ CREATE TABLE api_credentials (
     name TEXT NOT NULL,
     provider TEXT NOT NULL,
     apiKey TEXT NOT NULL,
-    maskedKey TEXT,
     baseUrl TEXT,
     isActive INTEGER DEFAULT 1,
     quotaLimit REAL,

@@ -1,8 +1,8 @@
 from fastapi import APIRouter,Request
 import asyncio
-from Singleton import singletonInit
+from gateway.Singleton import singletonInit
 from gateway.controller.AbstractController import AbstractController
-from service.SystemInfoService import SystemInfoService
+from gateway.service.SystemInfoService import SystemInfoService
 from pojo.PanelInfo import SystemHealthResponse,AlertQuery,AlertEvent
 from fastapi.responses import StreamingResponse
 from pojo.Common import ListResponse

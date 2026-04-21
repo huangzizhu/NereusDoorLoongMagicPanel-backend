@@ -3,7 +3,7 @@ from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
 from gateway.service.FirewallService import FirewallService
-from pojo.FireWall import SecuritySwitchState,SecuritySwitchUpdate,PortRuleCreate,PortRule, SshConfig,SshConfigUpdate
+from pojo.FireWall import SecuritySwitchState,SecuritySwitchUpdate,PortRuleCreate,PortRule, SshConfig,SshConfigUpdate,SshLogBase
 class FirewallController(AbstractController):
     @singletonInit
     def __init__(self):
@@ -19,10 +19,6 @@ class FirewallController(AbstractController):
             state: SecuritySwitchState = self.firewallService.getSecuritySwitchState()
             return Response.success(data=state.model_dump())
 
-        @self.router.get("/ssh/config")
-        def getSshConfig() -> ResponseModel:
-            config: SshConfig = self.firewallService.getSshConfig()
-            return Response.success(data=config.model_dump())
         
         @self.router.put("/ssh/config")
         def updateSshConfig(updateRequest:SshConfigUpdate) -> ResponseModel:
@@ -55,3 +51,8 @@ class FirewallController(AbstractController):
                     "list":[rule.model_dump() for rule in rules],
                 }
             )
+        
+        @self.router.get("/ssh/logs")
+        def getSshLogBase() -> ResponseModel:
+            logs = self.firewallService.getSshLogBase()
+            return Response.success(data={"total":len(logs),"list":[log.model_dump() for log in logs],})

@@ -1,4 +1,5 @@
-from controller.SystemInfoController import SystemInfoController
+from gateway.controller.ConfigController import ConfigController
+from gateway.controller.SystemInfoController import SystemInfoController
 from gateway.controller.FileController import FileController
 from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel
@@ -23,6 +24,7 @@ class Application:
         self.controllers.append(FileController())
         self.controllers.append(FirewallController())
         self.controllers.append(SystemInfoController())
+        self.controllers.append(ConfigController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()
