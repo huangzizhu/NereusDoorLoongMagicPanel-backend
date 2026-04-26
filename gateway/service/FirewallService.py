@@ -291,17 +291,7 @@ class FirewallService(Singleton):
     def updateSecuritySwitchState(self, updateRequest: SecuritySwitchUpdate) -> SecuritySwitchState:
         if updateRequest.sshServiceEnabled is not None:
             sshAction = ServiceAction.START if updateRequest.sshServiceEnabled else ServiceAction.STOP
-            try:
-                manageSystemService("sshd", action=sshAction)
-            except Exception as e1:
-                try:
-                    manageSystemService("ssh", action=sshAction)
-                except Exception as e2:
-                    raise SecurityStatusReadException(
-                        innerMessage=f"sshd更新失败: {e1}; ssh更新失败: {e2}",
-                        userMessage="更新SSH服务状态失败",
-                        cause=e2,
-                    )
+            self._updateSshServiceEnabled(sshAction)
 
         if updateRequest.firewallEnabled is not None:
             try:
@@ -334,6 +324,74 @@ class FirewallService(Singleton):
         return SecuritySwitchState(
             firewallEnabled=self.readComputerFirewallEnabled(),
             sshServiceEnabled=self.readSshServiceEnabled(),
+        )
+
+    def _updateSshServiceEnabled(self, sshAction: ServiceAction) -> None:
+        try:
+            manageSystemService("sshd", action=sshAction)
+            return
+        except Exception as e1:
+            sshdError = e1
+
+        try:
+            manageSystemService("ssh", action=sshAction)
+            return
+        except Exception as e2:
+            sshError = e2
+
+        systemctlAction = self._toSystemctlAction(sshAction)
+        sudoSshdErr = self._trySystemctlServiceAction("sshd", systemctlAction)
+        if sudoSshdErr is None:
+            return
+
+        sudoSshErr = self._trySystemctlServiceAction("ssh", systemctlAction)
+        if sudoSshErr is None:
+            return
+
+        raise SecurityStatusReadException(
+            innerMessage=(
+                f"sshd更新失败: {sshdError}; ssh更新失败: {sshError}; "
+                f"sudo systemctl sshd失败: {sudoSshdErr}; sudo systemctl ssh失败: {sudoSshErr}"
+            ),
+            userMessage="更新SSH服务状态失败",
+        )
+
+    def _toSystemctlAction(self, action: ServiceAction) -> str:
+        if action == ServiceAction.START:
+            return "start"
+        if action == ServiceAction.STOP:
+            return "stop"
+        if action == ServiceAction.RESTART:
+            return "restart"
+        return "status"
+
+    def _trySystemctlServiceAction(self, serviceName: str, action: str):
+        # 先尝试普通 systemctl（部分桌面环境允许当前用户通过 polkit 管理服务）。
+        directResult = subprocess.run(
+            ["systemctl", action, serviceName],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if directResult.returncode == 0:
+            return None
+
+        # 再尝试 sudo 非交互模式兜底。
+        sudoResult = subprocess.run(
+            ["sudo", "-n", "systemctl", action, serviceName],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if sudoResult.returncode == 0:
+            return None
+
+        return (
+            sudoResult.stderr.strip()
+            or sudoResult.stdout.strip()
+            or directResult.stderr.strip()
+            or directResult.stdout.strip()
+            or f"{serviceName} {action} 执行失败"
         )
     
 

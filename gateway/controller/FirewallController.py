@@ -25,6 +25,10 @@ class FirewallController(AbstractController):
             config: SshConfig = self.firewallService.updateSshConfig(updateRequest)
             return Response.success(data=config.model_dump())
         
+        @self.router.get("/ssh/config")
+        def getSshConfig()-> ResponseModel:
+            state: SshConfig = self.firewallService.getSshConfig()
+            return Response.success(data=state.model_dump())
         @self.router.put("/switch")
         def updateSecuritySwitchState(updateRequest: SecuritySwitchUpdate | None = Body(default=None)) -> ResponseModel:
             request = updateRequest or SecuritySwitchUpdate()
