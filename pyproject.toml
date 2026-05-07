@@ -21,4 +21,4 @@ dev = [
 ]
 
 [tool.uv.sources]
-ndlmpanel-agent = { git = "https://github.com/Raix2215/NDLMPanel-Agent.git" }
+ndlmpanel-agent = { git = "https://github.com/huangzizhu/NDLMPanel-Agent/" }

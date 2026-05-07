@@ -4,7 +4,7 @@ from Singleton import singletonInit
 from controller.AbstractController import AbstractController
 from pojo.Common import ListResponse
 from service.ConfigService import ConfigService
-from pojo.ApiKey import ApiCredentialCreate, ApiCredentialResponse, ApiCredentialUpdate, ApiCredentialDelete
+from pojo.ApiKey import ApiCredentialCreate, ApiCredentialResponse, ApiCredentialUpdate
 from gateway.Response import ResponseModel,Response
 
 class ConfigController(AbstractController):

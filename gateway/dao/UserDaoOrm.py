@@ -77,3 +77,12 @@ class UserDaoOrm(UserDaoInterface):
             raise
         finally:
             session.close()
+
+    def getUserByUid(self, userId) -> Optional[UserOrm]:
+        session = self.SessionLocal()
+        try:
+            return session.query(UserOrm).filter(UserOrm.userId == userId).one_or_none()
+        except Exception:
+            raise
+        finally:
+            session.close()

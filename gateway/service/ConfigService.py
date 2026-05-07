@@ -4,8 +4,7 @@ from Exception.InvalidParamException import InvalidParamException
 from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.ConfigDaoInterface import ConfigDaoInterface
 from gateway.dao.ConfigDaoOrm import ConfigDaoOrm
-from pojo.ApiKey import ApiCredentialCreate, ApiCredentialResponse, ApiCredentialOrm2pydantic, ApiCredentialUpdate, \
-    ApiCredentialDelete
+from pojo.ApiKey import ApiCredentialCreate, ApiCredentialResponse, ApiCredentialOrm2pydantic, ApiCredentialUpdate
 from Exception.DataBaseException import DataBaseException
 from pojo.Common import ListResponse
 

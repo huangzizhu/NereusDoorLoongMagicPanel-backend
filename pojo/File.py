@@ -15,8 +15,8 @@ class FileItem(BaseModel):
     createdTime: datetime = Field(..., description="创建时间")
     modifiedTime: datetime = Field(..., description="修改时间")
     owner: str = Field(..., max_length=64, description="所有者")
+    group: str = Field(..., max_length=64, description="组")
     permissions: str = Field(..., max_length=10, description="权限标识")
-
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -81,16 +81,37 @@ class UpdatePermissionsRequest(BaseModel):
 class SearchFilesRequest(BaseModel):
     path: str = Field(..., description="搜索起始路径")
     expression: str = Field(..., description="搜索表达式/关键字")
+    recursive: bool = Field(default=False, description="是否递归搜索子目录")
+    ignoreCase: bool = Field(default=False, description="是否忽略大小写")
+    invertMatch: bool = Field(default=False, description="是否取反匹配")
 
 class CreateFileRequest(BaseModel):
     path: str = Field(..., description="文件路径")
+
+class ZipFileRequest(BaseModel):
+    path: str = Field(..., description="文件路径")
+
+class UnzipFileRequest(BaseModel):
+    dstPath: str = Field(..., description="解压目标路径")
+    zipFilePath: Optional[str] = Field(None, description="压缩文件路径")
 
 class RenameOrMoveFileRequest(BaseModel):
     sourcePath: str = Field(..., description="原文件路径")
     destinationPath: str = Field(..., description="新文件路径")
 
-class DownloadFileRequest(BaseModel):
-    filePath: str = Field(..., description="文件路径")
+class CopyFileRequest(BaseModel):
+    sourcePath: str = Field(..., description="原文件路径")
+    destinationPath: str = Field(..., description="新文件路径")
+
+class UpdateOwnerRequest(BaseModel):
+    targetPath: str = Field(..., description="路径")
+    owner: str = Field(..., max_length=64, description="新所有者")
+    group: str = Field(..., max_length=64, description="新组")
+    recursive: bool = Field(default=False, description="是否递归更新子目录")
+
+class WriteTextRequest(BaseModel):
+    path: str = Field(..., description="文件路径")
+    content: str = Field(..., description="要写入的内容")
 
 # ==========================================
 # 4. 响应模型
@@ -109,7 +130,5 @@ class GetPermissionsResponse(BaseModel):
     owner: str
     group: str
 
-class SearchFilesResponse(BaseModel):
-    total: int
-    page: int
-    fileList: List[FileItem]
+class SearchFilesResponse(ListResponse):
+    pass
