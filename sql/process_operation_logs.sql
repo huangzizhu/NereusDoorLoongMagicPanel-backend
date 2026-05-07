@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS process_operation_logs (
+    logId INTEGER PRIMARY KEY AUTOINCREMENT,
+    operationType VARCHAR(30) NOT NULL,
+    targetPids VARCHAR(1000) NOT NULL,
+    operator VARCHAR(50) NOT NULL,
+    reason VARCHAR(500),
+    result VARCHAR(20) NOT NULL,
+    detail VARCHAR(1000),
+    createTime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
