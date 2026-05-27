@@ -1,9 +1,9 @@
 from fastapi import APIRouter
 
-from Singleton import singletonInit
-from controller.AbstractController import AbstractController
+from gateway.Singleton import singletonInit
+from gateway.controller.AbstractController import AbstractController
 from pojo.Common import ListResponse
-from service.ConfigService import ConfigService
+from gateway.service.ConfigService import ConfigService
 from pojo.ApiKey import ApiCredentialCreate, ApiCredentialResponse, ApiCredentialUpdate
 from gateway.Response import ResponseModel,Response
 
