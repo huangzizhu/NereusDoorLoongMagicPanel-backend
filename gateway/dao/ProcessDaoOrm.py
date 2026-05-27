@@ -1,6 +1,6 @@
-from Singleton import Singleton, singletonInit
+from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.ProcessDaoInterface import ProcessDaoInterface
-from orm.OrmEngine import OrmEngine
+from gateway.orm.OrmEngine import OrmEngine
 from gateway.orm.ProcessOrm import ProcessOperationLogOrm
 from pojo.Process import ProcessOperationLog
 from typing import List

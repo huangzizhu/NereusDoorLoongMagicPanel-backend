@@ -1,5 +1,5 @@
-from controller.ConfigController import ConfigController
-from controller.SystemInfoController import SystemInfoController
+from gateway.controller.ConfigController import ConfigController
+from gateway.controller.SystemInfoController import SystemInfoController
 from gateway.controller.FileController import FileController
 from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel
@@ -12,6 +12,7 @@ from gateway.controller.UserController import UserController
 from fastapi.middleware.cors import CORSMiddleware
 from gateway.controller.FirewallController import FirewallController
 from gateway.controller.ProcessController import ProcessController
+from gateway.controller.TerminalController import TerminalController
 
 from starlette.formparsers import MultiPartParser
 
@@ -34,6 +35,7 @@ class Application:
         self.controllers.append(SystemInfoController())
         self.controllers.append(ConfigController())
         self.controllers.append(ProcessController())
+        self.controllers.append(TerminalController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()
@@ -62,5 +64,3 @@ class Application:
 
         self.globalExceptionHandler.registerAllHandler(app)
         return app
-
-

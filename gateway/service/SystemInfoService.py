@@ -1,9 +1,9 @@
 from typing import List
 
 from Exception.InvalidParamException import InvalidParamException
-from Singleton import Singleton, singletonInit
-from dao.SystemInfoDaoInterface import SystemInfoDaoInterface
-from dao.SystemInfoDao import SystemInfoDao
+from gateway.Singleton import Singleton, singletonInit
+from gateway.dao.SystemInfoDaoInterface import SystemInfoDaoInterface
+from gateway.dao.SystemInfoDao import SystemInfoDao
 import time
 from ndlmpanel_agent.tools.ops.monitor.system_monitor_tools import (getCpuInfo
 ,getMemoryInfo,getGpuInfo,getDiskInfo,getNetworkInfo)
@@ -162,7 +162,6 @@ class SystemInfoService(Singleton):
             raise
         except Exception as e:
             raise DataBaseException(innerMessage=str(e), userMessage="数据库操作错误，请重试或联系管理员", cause=e)
-
 
 
 
