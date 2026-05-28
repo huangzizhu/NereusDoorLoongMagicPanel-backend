@@ -32,9 +32,9 @@ class SystemInfoController(AbstractController):
 
         @self.router.get("/health")
         async def getSystemInfoHealthSSE(request: Request):
+            request: Request
             return StreamingResponse(self.getSystemInfo(request), media_type="text/event-stream")
-
-        @self.router.get("/alerts")
+        @self.router.post("/alerts/all")
         def getAllSystemAlerts(alertQuery: AlertQuery):
             alertList: ListResponse = self.systemInfoService.getAllSystemAlerts(alertQuery)
             return Response.success(alertList)
@@ -48,5 +48,4 @@ class SystemInfoController(AbstractController):
         def setAlertsProcess(id: int):
             alert: AlertEvent = self.systemInfoService.setAlertsProcess(id)
             return Response.success(alert)
-
 

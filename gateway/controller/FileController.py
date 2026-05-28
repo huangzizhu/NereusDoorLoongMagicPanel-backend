@@ -1,17 +1,17 @@
 from fastapi import APIRouter,UploadFile, File, Form
-from ndlmpanel_agent import FileOperationResult
 from fastapi.responses import FileResponse
-
 from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
 from gateway.controller.AbstractController import AbstractController
 from gateway.service.FileService import FileService
 from pojo.File import (ListDirectoryRequest, ListDirectoryResponse
-, GetFolderTreeRequest, GetFolderTreeResponse, DeletePathRequest
-, BatchDeletePathRequest, UpdatePermissionsRequest, GetPermissionsRequest
-, CreateFileRequest, RenameOrMoveFileRequest, DownloadFileRequest)
+, GetFolderTreeRequest, DeletePathRequest, BatchDeletePathRequest, UpdatePermissionsRequest
+, CreateFileRequest, RenameOrMoveFileRequest, CopyFileRequest, FileItem, SearchFilesRequest,
+SearchFilesResponse, ZipFileRequest, UnzipFileRequest, UpdateOwnerRequest, WriteTextRequest)
 from pojo.Common import ListResponse
-from ndlmpanel_agent.models.ops.filesystem.filesystem_models import PermissionChangeResult,FileOperationResult
+from ndlmpanel_agent.models.ops.filesystem.filesystem_models import (PermissionChangeResult
+, FileOperationResult, DecompressResult, CompressResult, OwnerChangeResult, TextFileReadResult, TextFileWriteResult)
+
 
 class FileController(AbstractController):
     @singletonInit
@@ -23,14 +23,14 @@ class FileController(AbstractController):
 
     def routerSetup(self):
 
-        @self.router.get("/list")
+        @self.router.post("/list")
         def getFileList(listDirectoryRequest: ListDirectoryRequest) -> ResponseModel:
             list: ListDirectoryResponse = self.fileService.getFileList(listDirectoryRequest)
             return Response.success(data=list)
 
-        @self.router.get("/tree")
+        @self.router.post("/tree")
         def getFileTree(treeRequest: GetFolderTreeRequest) -> ResponseModel:
-            res: GetFolderTreeResponse = self.fileService.getFileTree(treeRequest)
+            res = self.fileService.getFileTree(treeRequest)
             return Response.success(data=res)
 
         @self.router.post("")
@@ -53,11 +53,6 @@ class FileController(AbstractController):
             res: PermissionChangeResult = self.fileService.updatePermissions(updateRequest)
             return Response.success(res)
 
-        @self.router.get("/permissions")
-        def getFilePermissions(permissionsRequest: GetPermissionsRequest) -> ResponseModel:
-            res = self.fileService.getFilePermissions(permissionsRequest.path)
-            return Response.success(res)
-
         @self.router.put("")
         def renameOrMoveFile(fileRequest: RenameOrMoveFileRequest) -> ResponseModel:
             res: FileOperationResult = self.fileService.renameOrMoveFile(fileRequest)
@@ -76,10 +71,53 @@ class FileController(AbstractController):
             res: FileOperationResult = await self.fileService.uploadFile(destinationPath, file)
             return Response.success(res)
 
-        @self.router.get("/download")
-        def downloadFile(request: DownloadFileRequest):
-            fileResponse: FileResponse = self.fileService.downloadFile(request.filePath)
+        @self.router.get("/download/{filePath:path}")
+        def downloadFile(filePath: str) -> FileResponse:
+            fileResponse: FileResponse = self.fileService.downloadFile(filePath)
             return fileResponse
+
+        @self.router.get("/info/{filePath:path}")
+        def getFileInfo(filePath: str) -> ResponseModel:
+            fileInfo: FileItem = self.fileService.getFileInfo(filePath)
+            return Response.success(data=fileInfo)
+
+        @self.router.post("/search")
+        def searchFiles(searchRequest: SearchFilesRequest) -> ResponseModel:
+            res: SearchFilesResponse = self.fileService.searchFiles(searchRequest)
+            return Response.success(data=res)
+
+        @self.router.post("/copy")
+        def copyFile(copyRequest: CopyFileRequest) -> ResponseModel:
+            res: FileOperationResult = self.fileService.copyFile(copyRequest)
+            return Response.success(res)
+
+        @self.router.post("/zip")
+        def zipFile(zipRequest: ZipFileRequest) -> ResponseModel:
+            res: CompressResult = self.fileService.zipFile(zipRequest)
+            return Response.success(res)
+
+        @self.router.post("/unzip")
+        def unzipFile(unzipRequest: UnzipFileRequest) -> ResponseModel:
+            res: DecompressResult = self.fileService.unzipFile(unzipRequest)
+            return Response.success(res)
+
+        @self.router.put("/owner")
+        def updateOwner(ownerRequest: UpdateOwnerRequest) -> ResponseModel:
+            res: OwnerChangeResult = self.fileService.updateOwner(ownerRequest)
+            return Response.success(res)
+
+        @self.router.get("/read/{path:path}")
+        def readTextFile(path: str) -> ResponseModel:
+            text: TextFileReadResult = self.fileService.readTextFile(path)
+            return Response.success(data=text)
+
+        @self.router.post("/write")
+        def writeTextFile(writeRequest: WriteTextRequest) -> ResponseModel:
+            res: TextFileWriteResult = self.fileService.writeTextFile(writeRequest)
+            return Response.success(res)
+
+
+
 
 
 

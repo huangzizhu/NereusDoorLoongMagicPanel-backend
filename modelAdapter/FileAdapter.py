@@ -17,6 +17,7 @@ class FileAdapter:
             size=fileInfo.sizeBytes,
             createdTime=fileInfo.modifiedTime,
             modifiedTime=fileInfo.modifiedTime,
-            owner="测试阶段",
+            owner=fileInfo.owner if fileInfo.owner else "",
             permissions=fileInfo.permissions,
+            group=fileInfo.group if fileInfo.group else "",
         )

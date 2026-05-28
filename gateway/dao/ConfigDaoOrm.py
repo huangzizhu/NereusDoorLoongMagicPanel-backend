@@ -71,4 +71,3 @@ class ConfigDaoOrm(ConfigDaoInterface):
             raise
         finally:
             session.close()
-
