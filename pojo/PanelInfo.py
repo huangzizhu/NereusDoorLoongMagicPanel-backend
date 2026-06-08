@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
-from ndlmpanel_agent.models.ops.monitor.system_monitor_models import (CpuInfo
+from utils.toolFunction.models.ops.monitor.system_monitor_models import (CpuInfo
 ,MemoryInfo,DiskPartitionInfo,GpuInfo,NetworkInterfaceInfo)
 from typing import List
 from pojo.Common import PageSearchRequest

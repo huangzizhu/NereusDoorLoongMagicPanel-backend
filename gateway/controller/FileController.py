@@ -9,7 +9,7 @@ from pojo.File import (ListDirectoryRequest, ListDirectoryResponse
 , CreateFileRequest, RenameOrMoveFileRequest, CopyFileRequest, FileItem, SearchFilesRequest,
 SearchFilesResponse, ZipFileRequest, UnzipFileRequest, UpdateOwnerRequest, WriteTextRequest)
 from pojo.Common import ListResponse
-from ndlmpanel_agent.models.ops.filesystem.filesystem_models import (PermissionChangeResult
+from utils.toolFunction.models.ops.filesystem.filesystem_models import (PermissionChangeResult
 , FileOperationResult, DecompressResult, CompressResult, OwnerChangeResult, TextFileReadResult, TextFileWriteResult)
 
 

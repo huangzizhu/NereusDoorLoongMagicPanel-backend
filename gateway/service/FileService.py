@@ -1,7 +1,7 @@
 import os.path
 
 from fastapi import UploadFile
-from ndlmpanel_agent import createDirectory, listSingleFileOrDirectory, getDirectoryTree, grepFileOrDirectory, \
+from utils.toolFunction import createDirectory, listSingleFileOrDirectory, getDirectoryTree, grepFileOrDirectory, \
     compressPath
 from fastapi.responses import FileResponse
 
@@ -17,17 +17,17 @@ from pojo.File import (FileItem, ListDirectoryResponse, ListDirectoryRequest
 , SearchFilesRequest, SearchFilesResponse, CopyFileRequest, ZipFileRequest, UnzipFileRequest, UpdateOwnerRequest,
                        WriteTextRequest)
 from pojo.Common import ListResponse
-from ndlmpanel_agent.tools.ops.filesystem.filesystem_tools import (listDirectory
+from utils.toolFunction.tools.ops.filesystem.filesystem_tools import (listDirectory
 , deleteDirectory, deleteFile, changePermissions, createFile, renameFileOrDirectory, copyFile, decompressArchive,
                                                                    changeOwner, isTextFile, readTextFile, writeTextFile)
-from ndlmpanel_agent.models.ops.filesystem.filesystem_models import (FileInfo
+from utils.toolFunction.models.ops.filesystem.filesystem_models import (FileInfo
 , FileOperationResult, PermissionChangeResult, DirectoryTreeResult, GrepResult, CompressResult, DecompressResult,
                                                                      OwnerChangeResult, TextFileReadResult,
                                                                      TextFileCheckResult, TextFileWriteResult)
-from ndlmpanel_agent.exceptions.tool_exceptions import (ToolExecutionException
+from utils.toolFunction.exceptions.tool_exceptions import (ToolExecutionException
 , PermissionDeniedException,ResourceNotFoundException)
 from typing import List
-from modelAdapter.FileAdapter import FileAdapter
+
 from Exception.ExecutePermissionDeniedException import ExecutePermissionDeniedException
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
 from pathlib import Path
@@ -50,7 +50,7 @@ class FileService(Singleton):
 
     def getFileList(self, listDirectoryRequest: ListDirectoryRequest)->  ListDirectoryResponse:
         try:
-            fileList: List[FileItem] = [FileAdapter.FileInfo2FileItem(fileInfo) for fileInfo in listDirectory(listDirectoryRequest.path)]
+            fileList: List[FileItem] = [FileItem.from_file_info(fileInfo) for fileInfo in listDirectory(listDirectoryRequest.path)]
         except PermissionDeniedException as e:
             raise ExecutePermissionDeniedException(innerMessage=e.innerMessage, userMessage="无权访问该目录")
         except ToolExecutionException as e:
@@ -205,7 +205,7 @@ class FileService(Singleton):
         if not p.exists():
             raise FileNotFoundException(userMessage=f"路径不存在: {filePath}")
         try:
-            return FileAdapter.FileInfo2FileItem(listSingleFileOrDirectory(filePath))
+            return FileItem.from_file_info(listSingleFileOrDirectory(filePath))
         except Exception as e:
             raise BuiltinToolExecutionException(innerMessage=str(e), userMessage=f"文件信息获取失败: {str(e)}")
 
@@ -225,7 +225,7 @@ class FileService(Singleton):
                                                         searchFileNames=True)
             if not grepResult.success:
                 raise BuiltinToolExecutionException(innerMessage=grepResult.errorMessage,userMessage="文件搜索失败")
-            items: List[FileItem] = [FileAdapter.FileInfo2FileItem(match.fileInfo) for match in grepResult.matches]
+            items: List[FileItem] = [FileItem.from_file_info(match.fileInfo) for match in grepResult.matches]
             return SearchFilesResponse(items=items, total=grepResult.totalMatches)
         except Exception as e:
             raise BuiltinToolExecutionException(innerMessage=str(e), userMessage="文件搜索失败")

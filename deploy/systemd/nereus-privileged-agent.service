@@ -1,0 +1,18 @@
+[Unit]
+Description=Nereus Privileged Agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/nereus/backend
+Environment=NDLM_PRIVILEGED_AGENT_SOCKET=/run/ndlmpanel/privileged-agent.sock
+Environment=NDLM_PRIVILEGED_AGENT_SOCKET_GROUP=backend
+Environment=NDLM_PRIVILEGED_AGENT_SOCKET_MODE=660
+ExecStart=/opt/nereus/backend/.venv/bin/python -m privileged_agent.server
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

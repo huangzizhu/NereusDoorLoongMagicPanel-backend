@@ -19,6 +19,28 @@ class FileItem(BaseModel):
     permissions: str = Field(..., max_length=10, description="权限标识")
     model_config = ConfigDict(from_attributes=True)
 
+    @classmethod
+    def from_file_info(cls, file_info) -> "FileItem":
+        """从 FileInfo 模型转换为 FileItem（避免 pojo 层引入 toolFunction 的运行时依赖）"""
+        # FileType(str, Enum) → int 映射，与 FileItem.type 字段兼容
+        _type_map = {
+            "file": 0,
+            "directory": 1,
+            "symlink": 2,
+            "other": 3,
+        }
+        return cls(
+            name=file_info.fileName,
+            type=_type_map.get(file_info.fileType, 3),
+            path=file_info.absolutePath,
+            size=file_info.sizeBytes,
+            createdTime=file_info.modifiedTime,
+            modifiedTime=file_info.modifiedTime,
+            owner=file_info.owner or "",
+            permissions=file_info.permissions,
+            group=file_info.group or "",
+        )
+
 
 class FolderNode(BaseModel):
     """文件夹树节点模型 (递归结构)"""

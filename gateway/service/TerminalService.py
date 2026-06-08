@@ -1,10 +1,11 @@
 import asyncio
+import errno
 import fcntl
 import os
 import pty
 import select
-import signal
 import shutil
+import signal
 import struct
 import subprocess
 import termios
@@ -17,12 +18,27 @@ from typing import Optional
 
 from Exception.DataBaseException import DataBaseException
 from Exception.InvalidParamException import InvalidParamException
+from Exception.TerminalAuthenticationException import TerminalAuthenticationException
+from Exception.TerminalEnvironmentUnavailableException import TerminalEnvironmentUnavailableException
+from Exception.TerminalProcessException import TerminalProcessException
 from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.TerminalDaoInterface import TerminalDaoInterface
 from gateway.dao.TerminalDaoOrm import TerminalDaoOrm
 from pojo.Common import ListResponse
-from pojo.Terminal import TerminalAdminLoginResultMessage, TerminalErrorMessage, TerminalMode, TerminalOutputMessage, \
-    TerminalSessionAdminAuthUpdate, TerminalSessionCloseUpdate, TerminalSessionLogCreate, TerminalStateMessage
+from pojo.Terminal import (
+    TerminalAdminLoginResultMessage,
+    TerminalErrorMessage,
+    TerminalMode,
+    TerminalOutputMessage,
+    TerminalSessionAdminAuthUpdate,
+    TerminalSessionCloseUpdate,
+    TerminalSessionLogCreate,
+    TerminalStateMessage,
+)
+
+
+AUTH_TIMEOUT_SECONDS = 8
+AUTH_PASSWORD_PROMPTS = ("assword", "密码")
 
 
 @dataclass
@@ -51,6 +67,7 @@ class TerminalRuntimeSession:
     adminAuthAttempted: bool = False
     adminAuthSucceeded: bool = False
     adminAuthFailedCount: int = 0
+    outputEscapeBuffer: str = ""
     idleTask: Optional[asyncio.Task] = None
     lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -97,14 +114,44 @@ class TerminalService(Singleton):
             raise InvalidParamException(userMessage="终端会话不存在或已关闭")
         return session
 
+    def _safeCloseFd(self, fd: Optional[int]):
+        if fd is None:
+            return
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    def _safeTerminateProcess(self, process: Optional[subprocess.Popen]):
+        if process is None or process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except Exception:
+                pass
+
     def _setWindowSize(self, fd: int, cols: int, rows: int):
         winsize = struct.pack("HHHH", rows, cols, 0, 0)
-        fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+        try:
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+        except OSError as e:
+            raise TerminalProcessException(
+                innerMessage=str(e),
+                userMessage="设置终端窗口大小失败",
+                cause=e,
+            )
 
     def _spawnProcess(self, session: TerminalRuntimeSession, command: list[str], mode: TerminalMode, linuxUser: str, title: str):
-        masterFd, slaveFd = pty.openpty()
-        self._setWindowSize(slaveFd, session.cols, session.rows)
+        masterFd = None
+        slaveFd = None
+        process = None
         try:
+            masterFd, slaveFd = pty.openpty()
+            self._setWindowSize(slaveFd, session.cols, session.rows)
             process = subprocess.Popen(
                 command,
                 stdin=slaveFd,
@@ -114,10 +161,20 @@ class TerminalService(Singleton):
                 close_fds=True,
                 env=os.environ.copy(),
             )
-        except Exception:
-            os.close(masterFd)
-            os.close(slaveFd)
+        except TerminalProcessException:
+            self._safeCloseFd(masterFd)
+            self._safeCloseFd(slaveFd)
+            self._safeTerminateProcess(process)
             raise
+        except Exception as e:
+            self._safeCloseFd(masterFd)
+            self._safeCloseFd(slaveFd)
+            self._safeTerminateProcess(process)
+            raise TerminalProcessException(
+                innerMessage=str(e),
+                userMessage="创建终端进程失败",
+                cause=e,
+            )
 
         oldMasterFd = session.masterFd
         oldSlaveFd = session.slaveFd
@@ -142,30 +199,12 @@ class TerminalService(Singleton):
             masterFd: Optional[int],
             slaveFd: Optional[int],
     ):
-        if slaveFd is not None:
-            try:
-                os.close(slaveFd)
-            except OSError:
-                pass
+        self._safeCloseFd(slaveFd)
+        self._safeCloseFd(masterFd)
 
-        if masterFd is not None:
-            try:
-                os.close(masterFd)
-            except OSError:
-                pass
+        if process is not None:
+            self._safeTerminateProcess(process)
 
-        if process is None:
-            return
-
-        if process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-                process.wait(timeout=2)
-            except Exception:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except Exception:
-                    pass
         if session is not None and session.process is process:
             session.process = None
             session.masterFd = None
@@ -178,6 +217,37 @@ class TerminalService(Singleton):
             daemon=True,
         )
         t.start()
+
+    def _sanitizeTerminalOutput(self, session: TerminalRuntimeSession, text: str) -> str:
+        if not text and not session.outputEscapeBuffer:
+            return ""
+
+        combined = session.outputEscapeBuffer + text
+        session.outputEscapeBuffer = ""
+        sanitizedParts: list[str] = []
+        index = 0
+
+        while index < len(combined):
+            escIndex = combined.find("\x1b]", index)
+            if escIndex < 0:
+                sanitizedParts.append(combined[index:])
+                break
+
+            sanitizedParts.append(combined[index:escIndex])
+            terminatorEsc = combined.find("\x1b\\", escIndex + 2)
+            terminatorBel = combined.find("\x07", escIndex + 2)
+
+            if terminatorBel < 0 and terminatorEsc < 0:
+                session.outputEscapeBuffer = combined[escIndex:]
+                break
+
+            if terminatorBel >= 0 and (terminatorEsc < 0 or terminatorBel < terminatorEsc):
+                index = terminatorBel + 1
+                continue
+
+            index = terminatorEsc + 2
+
+        return "".join(sanitizedParts)
 
     def _readerLoop(self, sessionId: str, generation: int):
         while True:
@@ -200,8 +270,12 @@ class TerminalService(Singleton):
                     continue
                 data = os.read(masterFd, 4096)
                 if not data:
-                    raise OSError("pty closed")
-                message = TerminalOutputMessage(data=data.decode(errors="ignore"))
+                    raise TerminalProcessException(userMessage="终端连接已关闭")
+                with session.lock:
+                    sanitized = self._sanitizeTerminalOutput(session, data.decode(errors="ignore"))
+                if not sanitized:
+                    continue
+                message = TerminalOutputMessage(data=sanitized)
                 future = asyncio.run_coroutine_threadsafe(
                     session.ws.send_json(message.model_dump()),
                     session.loop,
@@ -248,7 +322,7 @@ class TerminalService(Singleton):
     def assertNormalTerminalAvailable(self):
         containerName = self._getNormalContainerName()
         if shutil.which("docker") is None:
-            raise InvalidParamException(userMessage="当前服务器未安装 Docker，普通终端功能不可用")
+            raise TerminalEnvironmentUnavailableException(userMessage="当前服务器未安装 Docker，普通终端功能不可用")
 
         try:
             result = subprocess.run(
@@ -259,16 +333,28 @@ class TerminalService(Singleton):
                 check=False,
             )
         except Exception as e:
-            raise InvalidParamException(userMessage=f"普通终端环境检查失败: {e}")
+            raise TerminalEnvironmentUnavailableException(
+                innerMessage=str(e),
+                userMessage="普通终端环境检查失败，请稍后重试",
+                cause=e,
+            )
 
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             if "No such object" in stderr or "No such container" in stderr:
-                raise InvalidParamException(userMessage=f"普通终端容器 {containerName} 不存在，当前不允许使用终端功能")
-            raise InvalidParamException(userMessage=f"Docker 环境不可用，当前不允许使用终端功能: {stderr or 'unknown error'}")
+                raise TerminalEnvironmentUnavailableException(
+                    innerMessage=stderr,
+                    userMessage=f"普通终端容器 {containerName} 不存在，当前不允许使用终端功能",
+                )
+            raise TerminalEnvironmentUnavailableException(
+                innerMessage=stderr or "unknown error",
+                userMessage="Docker 环境不可用，当前不允许使用普通终端",
+            )
 
         if result.stdout.strip().lower() != "true":
-            raise InvalidParamException(userMessage=f"普通终端容器 {containerName} 未运行，当前不允许使用终端功能")
+            raise TerminalEnvironmentUnavailableException(
+                userMessage=f"普通终端容器 {containerName} 未运行，当前不允许使用终端功能"
+            )
 
     def getAvailability(self) -> dict:
         self.assertNormalTerminalAvailable()
@@ -285,19 +371,106 @@ class TerminalService(Singleton):
             "-i",
         ]
 
-    def _authenticateLinuxUser(self, username: str, password: str) -> tuple[bool, str]:
-        try:
-            import pam
-        except ImportError:
-            return False, "服务器未安装 PAM Python 依赖"
+    def _authenticateLinuxUser(self, username: str, password: str):
+        if not username.strip():
+            raise InvalidParamException(userMessage="Linux 用户名不能为空")
+        if not password:
+            raise InvalidParamException(userMessage="Linux 用户密码不能为空")
+        if shutil.which("su") is None:
+            raise TerminalEnvironmentUnavailableException(userMessage="当前服务器未安装 su，无法进行 Linux 用户认证")
 
+        masterFd = None
+        slaveFd = None
+        process = None
+        outputChunks: list[bytes] = []
+        passwordSent = False
+        startedAt = time.time()
+        ptyClosed = False
         try:
-            auth = pam.pam()
-            if auth.authenticate(username, password):
-                return True, "认证成功"
-            return False, auth.reason or "Linux 用户认证失败"
+            masterFd, slaveFd = pty.openpty()
+            process = subprocess.Popen(
+                ["su", "-", username, "-c", "true"],
+                stdin=slaveFd,
+                stdout=slaveFd,
+                stderr=slaveFd,
+                start_new_session=True,
+                close_fds=True,
+                env=os.environ.copy(),
+            )
+            self._safeCloseFd(slaveFd)
+            slaveFd = None
+
+            while True:
+                if process.poll() is not None:
+                    break
+                if time.time() - startedAt > AUTH_TIMEOUT_SECONDS:
+                    raise TerminalProcessException(userMessage="Linux 用户认证超时，请稍后重试")
+
+                readable, _, _ = select.select([masterFd], [], [], 0.2)
+                if readable:
+                    try:
+                        chunk = os.read(masterFd, 4096)
+                    except OSError as e:
+                        if e.errno == errno.EIO:
+                            ptyClosed = True
+                            break
+                        raise
+                    if chunk:
+                        outputChunks.append(chunk)
+                        outputText = b"".join(outputChunks).decode(errors="ignore")
+                        if (not passwordSent) and any(prompt in outputText for prompt in AUTH_PASSWORD_PROMPTS):
+                            os.write(masterFd, (password + "\n").encode())
+                            passwordSent = True
+                    else:
+                        break
+                elif not passwordSent and time.time() - startedAt > 0.5:
+                    os.write(masterFd, (password + "\n").encode())
+                    passwordSent = True
+
+            if ptyClosed and process.poll() is None:
+                process.wait(timeout=2)
+
+            returnCode = process.wait(timeout=1)
+            if returnCode == 0:
+                return
+
+            outputText = b"".join(outputChunks).decode(errors="ignore").lower()
+            if "authentication failure" in outputText or "failure" in outputText:
+                raise TerminalAuthenticationException(userMessage="Linux 用户名或密码错误")
+
+            raise TerminalProcessException(
+                innerMessage=outputText,
+                userMessage="Linux 用户认证执行失败，请稍后重试",
+            )
+        except (InvalidParamException, TerminalAuthenticationException, TerminalEnvironmentUnavailableException, TerminalProcessException):
+            raise
         except Exception as e:
-            return False, f"PAM 认证执行失败: {e}"
+            raise TerminalProcessException(
+                innerMessage=str(e),
+                userMessage="Linux 用户认证执行失败，请稍后重试",
+                cause=e,
+            )
+        finally:
+            self._safeCloseFd(slaveFd)
+            self._safeCloseFd(masterFd)
+            self._safeTerminateProcess(process)
+
+    def _buildSession(self, userId: int, panelUsername: str, clientIp: str, ws, cols: int, rows: int) -> TerminalRuntimeSession:
+        return TerminalRuntimeSession(
+            sessionId=uuid.uuid4().hex,
+            userId=userId,
+            panelUsername=panelUsername,
+            clientIp=clientIp,
+            ws=ws,
+            loop=asyncio.get_running_loop(),
+            cols=cols,
+            rows=rows,
+            normalContainerName=self._getNormalContainerName(),
+            idleTimeoutSeconds=self._getIdleTimeoutSeconds(),
+            adminMaxFailedAttempts=self._getAdminMaxFailedAttempts(),
+            linuxUser=self._getNormalLinuxUser(),
+            title=f"{panelUsername}@{self._getNormalContainerName()}",
+        )
 
     def _persistSessionCreate(self, session: TerminalRuntimeSession):
         request = TerminalSessionLogCreate(
@@ -316,7 +489,10 @@ class TerminalService(Singleton):
             closeReason=None,
             exitCode=None,
         )
-        self.terminalDao.insertSession(request)
+        try:
+            self.terminalDao.insertSession(request)
+        except Exception as e:
+            raise DataBaseException(innerMessage=str(e), userMessage="创建终端会话失败", cause=e)
 
     def _persistAdminAuthResult(self, session: TerminalRuntimeSession):
         request = TerminalSessionAdminAuthUpdate(
@@ -327,7 +503,10 @@ class TerminalService(Singleton):
             adminAuthSucceeded=session.adminAuthSucceeded,
             adminAuthFailedCount=session.adminAuthFailedCount,
         )
-        self.terminalDao.markAdminAuthResult(request)
+        try:
+            self.terminalDao.markAdminAuthResult(request)
+        except Exception as e:
+            raise DataBaseException(innerMessage=str(e), userMessage="保存终端认证结果失败", cause=e)
 
     async def _sendState(self, session: TerminalRuntimeSession):
         message = TerminalStateMessage(
@@ -342,7 +521,7 @@ class TerminalService(Singleton):
         message = TerminalErrorMessage(code=code, msg=msg)
         await session.ws.send_json(message.model_dump())
 
-    async def openSession(
+    async def openNormalSession(
             self,
             userId: int,
             panelUsername: str,
@@ -351,25 +530,10 @@ class TerminalService(Singleton):
             cols: int,
             rows: int,
     ) -> str:
-        sessionId = uuid.uuid4().hex
-        session = TerminalRuntimeSession(
-            sessionId=sessionId,
-            userId=userId,
-            panelUsername=panelUsername,
-            clientIp=clientIp,
-            ws=ws,
-            loop=asyncio.get_running_loop(),
-            cols=cols,
-            rows=rows,
-            normalContainerName=self._getNormalContainerName(),
-            idleTimeoutSeconds=self._getIdleTimeoutSeconds(),
-            adminMaxFailedAttempts=self._getAdminMaxFailedAttempts(),
-            linuxUser=self._getNormalLinuxUser(),
-            title=f"{panelUsername}@{self._getNormalContainerName()}",
-        )
+        session = self._buildSession(userId, panelUsername, clientIp, ws, cols, rows)
 
         with self.sessionsLock:
-            self.sessions[sessionId] = session
+            self.sessions[session.sessionId] = session
 
         try:
             self.assertNormalTerminalAvailable()
@@ -382,12 +546,35 @@ class TerminalService(Singleton):
                     linuxUser=self._getNormalLinuxUser(),
                     title=f"{panelUsername}@{self._getNormalContainerName()}",
                 )
-            session.idleTask = asyncio.create_task(self._watchIdleTimeout(sessionId))
+            session.idleTask = asyncio.create_task(self._watchIdleTimeout(session.sessionId))
             await self._sendState(session)
-            return sessionId
-        except Exception as e:
-            await self.closeSession(sessionId, closeReason="open_failed", shouldCloseWebSocket=False)
-            raise DataBaseException(innerMessage=str(e), userMessage="创建终端会话失败", cause=e)
+            return session.sessionId
+        except (DataBaseException, InvalidParamException, TerminalEnvironmentUnavailableException, TerminalProcessException):
+            await self.closeSession(session.sessionId, closeReason="open_failed", shouldCloseWebSocket=False)
+            raise
+
+    async def createPendingAdminSession(
+            self,
+            userId: int,
+            panelUsername: str,
+            clientIp: str,
+            ws,
+            cols: int,
+            rows: int,
+    ) -> str:
+        session = self._buildSession(userId, panelUsername, clientIp, ws, cols, rows)
+        session.title = f"{panelUsername}@host"
+
+        with self.sessionsLock:
+            self.sessions[session.sessionId] = session
+
+        try:
+            self._persistSessionCreate(session)
+            session.idleTask = asyncio.create_task(self._watchIdleTimeout(session.sessionId))
+            return session.sessionId
+        except DataBaseException:
+            await self.closeSession(session.sessionId, closeReason="open_failed", shouldCloseWebSocket=False)
+            raise
 
     def writeInput(self, sessionId: str, data: str):
         session = self._getSession(sessionId)
@@ -395,7 +582,14 @@ class TerminalService(Singleton):
         with session.lock:
             if session.masterFd is None:
                 raise InvalidParamException(userMessage="终端会话未准备完成")
-            os.write(session.masterFd, data.encode())
+            try:
+                os.write(session.masterFd, data.encode())
+            except OSError as e:
+                raise TerminalProcessException(
+                    innerMessage=str(e),
+                    userMessage="写入终端失败",
+                    cause=e,
+                )
 
     def resize(self, sessionId: str, cols: int, rows: int):
         session = self._getSession(sessionId)
@@ -415,17 +609,12 @@ class TerminalService(Singleton):
                 return TerminalAdminLoginResultMessage(success=True, mode="admin", msg="当前已经是管理员终端")
             if session.adminAuthFailedCount >= session.adminMaxFailedAttempts:
                 return TerminalAdminLoginResultMessage(success=False, mode=session.mode, msg="管理员认证失败次数过多，请重新创建终端")
-
-        authenticated, message = self._authenticateLinuxUser(username, password)
-        with session.lock:
             session.adminAuthAttempted = True
-            if not authenticated:
-                session.adminAuthFailedCount += 1
-                self._persistAdminAuthResult(session)
-                return TerminalAdminLoginResultMessage(success=False, mode=session.mode, msg=message)
 
-            session.switching = True
-            try:
+        try:
+            self._authenticateLinuxUser(username, password)
+            with session.lock:
+                session.switching = True
                 self._spawnProcess(
                     session,
                     self._createAdminCommand(username),
@@ -435,12 +624,13 @@ class TerminalService(Singleton):
                 )
                 session.adminAuthSucceeded = True
                 session.switching = False
-                self._persistAdminAuthResult(session)
-            except Exception as e:
+            self._persistAdminAuthResult(session)
+        except (TerminalAuthenticationException, TerminalEnvironmentUnavailableException, TerminalProcessException, DataBaseException) as e:
+            with session.lock:
                 session.switching = False
                 session.adminAuthFailedCount += 1
-                self._persistAdminAuthResult(session)
-                return TerminalAdminLoginResultMessage(success=False, mode="normal", msg=f"创建管理员终端失败: {e}")
+            self._persistAdminAuthResult(session)
+            return TerminalAdminLoginResultMessage(success=False, mode=session.mode, msg=e.userMessage or "管理员认证失败")
 
         await self._sendState(session)
         return TerminalAdminLoginResultMessage(success=True, mode="admin", msg="管理员终端创建成功")

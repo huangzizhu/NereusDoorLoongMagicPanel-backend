@@ -5,11 +5,11 @@ from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.SystemInfoDaoInterface import SystemInfoDaoInterface
 from gateway.dao.SystemInfoDao import SystemInfoDao
 import time
-from ndlmpanel_agent.tools.ops.monitor.system_monitor_tools import (getCpuInfo
+from utils.toolFunction.tools.ops.monitor.system_monitor_tools import (getCpuInfo
 ,getMemoryInfo,getGpuInfo,getDiskInfo,getNetworkInfo)
-from ndlmpanel_agent.models.ops.monitor.system_monitor_models import (CpuInfo
+from utils.toolFunction.models.ops.monitor.system_monitor_models import (CpuInfo
 ,MemoryInfo,DiskPartitionInfo,GpuInfo,NetworkInterfaceInfo)
-from ndlmpanel_agent.tools.ops.misc.system_info_tools import getSystemVersion
+from utils.toolFunction.tools.ops.misc.system_info_tools import getSystemVersion
 
 from pojo.Common import ListResponse
 from pojo.PanelInfo import SystemHealthResponse, AlertQuery,AlertEvent

@@ -2,7 +2,7 @@ import random
 import signal
 from time import sleep
 
-from ndlmpanel_agent import getZombieOrphanProcesses, ProcessInfo, batchKillProcesses
+from utils.toolFunction import getZombieOrphanProcesses, ProcessInfo, batchKillProcesses
 from sqlalchemy import true
 
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
@@ -12,10 +12,10 @@ from Exception.InvalidParamException import InvalidParamException
 from gateway.dao.ProcessDaoOrm import ProcessDaoOrm
 from gateway.dao.ProcessDaoInterface import ProcessDaoInterface
 from gateway.Singleton import singletonInit,Singleton
-from ndlmpanel_agent.models.ops.process.process_models import ProcessInfo, ProcessSortBy, ProcessKillResult, \
+from utils.toolFunction.models.ops.process.process_models import ProcessInfo, ProcessSortBy, ProcessKillResult, \
     ProcessDetailInfo, ProcessAutoCleanResult, BatchKillResult, BatchKillMode
-from ndlmpanel_agent.tools.ops.process.process_tools import listProcesses,killProcess,getProcessDetail,autoCleanProcesses
-from ndlmpanel_agent.exceptions.tool_exceptions import ResourceNotFoundException, PermissionDeniedException, \
+from utils.toolFunction.tools.ops.process.process_tools import listProcesses,killProcess,getProcessDetail,autoCleanProcesses
+from utils.toolFunction.exceptions.tool_exceptions import ResourceNotFoundException, PermissionDeniedException, \
     ToolExecutionException
 from gateway.orm.ProcessOrm import ProcessOperationLogOrm
 from typing import List

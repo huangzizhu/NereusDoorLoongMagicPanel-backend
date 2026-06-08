@@ -8,7 +8,7 @@ from gateway.controller.AbstractController import AbstractController
 from gateway.service.ProcessService import ProcessService
 from pojo.Process import KillProcessRequest, AutoCleanRequest, BatchKillProcessRequest
 from gateway.Response import ResponseModel,Response
-from ndlmpanel_agent.models.ops.process.process_models import ProcessKillResult, ProcessDetailInfo, \
+from utils.toolFunction.models.ops.process.process_models import ProcessKillResult, ProcessDetailInfo, \
     ProcessAutoCleanResult, ProcessInfo, BatchKillResult
 import json
 class ProcessController(AbstractController):

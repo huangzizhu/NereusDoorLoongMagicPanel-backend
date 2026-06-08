@@ -55,3 +55,8 @@ class FirewallController(AbstractController):
                     "list":[rule.model_dump() for rule in rules],
                 }
             )
+
+        @self.router.get("/ssh/logs")
+        def getSshLogs() -> ResponseModel:
+            res = self.firewallService.getSshLogs()
+            return Response.success(data=res)

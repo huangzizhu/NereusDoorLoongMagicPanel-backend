@@ -24,11 +24,17 @@ class GlobalInterceptor(BaseHTTPMiddleware):
             "/docs",
             "/user/refresh",
         }
+        self.websocketPaths = {
+            "/terminal/ws",
+            "/terminal/admin/ws",
+        }
         self.ssePath = {
             "/system/health",
         }
 
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in self.websocketPaths:
+            return await call_next(request)
 
         userId = 0
         if request.url.path not in self.excludePaths:
@@ -116,4 +122,3 @@ class GlobalInterceptor(BaseHTTPMiddleware):
                 media_type=response.media_type)
 
         return response
-        return await call_next(request)

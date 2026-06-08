@@ -13,6 +13,7 @@ model_config = ConfigDict(
 class PortRuleBase(BaseModel):
     port: int = Field(..., ge=1, le=65535, description="端口号")
     protocol: int = Field(..., ge=0, le=1, description="协议类型：0=UDP, 1=TCP")
+    ipVersion: int = Field(4, ge=4, le=6, description="IP版本：4=IPv4, 6=IPv6")
     sourceIp: str = Field(..., max_length=50, description="来源IP，支持CIDR")
     destinationIp: str = Field(..., max_length=50, description="目标IP，支持CIDR")
     priority: int = Field(100, ge=1, description="规则优先级，默认100")
@@ -27,6 +28,7 @@ class PortRuleUpdate(BaseModel):
     # 更新时字段可选
     port: Optional[int] = Field(None, ge=1, le=65535)
     protocol: Optional[int] = Field(None, ge=0, le=1)
+    ipVersion: Optional[int] = Field(None, ge=4, le=6)
     sourceIp: Optional[str] = Field(None, max_length=50)
     destinationIp: Optional[str] = Field(None, max_length=50)
     priority: Optional[int] = Field(None, ge=1)
@@ -39,7 +41,7 @@ class PortRule(PortRuleBase):
     updatedTime: datetime
 
     model_config = ConfigDict(from_attributes=True, json_schema_extra={"example": {
-        "id": 1, "port": 22, "protocol": 1, "sourceIp": "192.168.1.0/24",
+        "id": 1, "port": 22, "protocol": 1, "ipVersion": 4, "sourceIp": "192.168.1.0/24",
         "destinationIp": "0.0.0.0/0", "priority": 1, "action": 1,
         "createdTime": "2026-04-12T10:00:00Z", "updatedTime": "2026-04-12T10:00:00Z"
     }})

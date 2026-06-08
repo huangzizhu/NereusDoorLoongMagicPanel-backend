@@ -13,6 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from gateway.controller.FirewallController import FirewallController
 from gateway.controller.ProcessController import ProcessController
 from gateway.controller.TerminalController import TerminalController
+from gateway.controller.DockerController import DockerController
+from gateway.controller.DatabaseController import DatabaseController
+from gateway.controller.NginxController import NginxController
 
 from starlette.formparsers import MultiPartParser
 
@@ -36,6 +39,9 @@ class Application:
         self.controllers.append(ConfigController())
         self.controllers.append(ProcessController())
         self.controllers.append(TerminalController())
+        self.controllers.append(DockerController())
+        self.controllers.append(DatabaseController())
+        self.controllers.append(NginxController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()

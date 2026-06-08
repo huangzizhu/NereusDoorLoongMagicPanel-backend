@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
-from ndlmpanel_agent.models.ops.process.process_models import ProcessInfo
+from utils.toolFunction.models.ops.process.process_models import ProcessInfo
 
 # ==================== 操作日志相关模型 ====================
 

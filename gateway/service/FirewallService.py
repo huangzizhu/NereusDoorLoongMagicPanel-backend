@@ -4,18 +4,18 @@ from datetime import datetime
 from typing import List
 import re
 import subprocess
-from pojo.FireWall import PortRuleCreate,PortRule, SshConfig,SshConfigUpdate
+from pojo.FireWall import PortRuleCreate,PortRule, SshConfig,SshConfigUpdate, SshLog
 from pathlib import Path
-from ndlmpanel_agent import (
-    getFirewallStatus,
+from utils.toolFunction import (
     manageSystemService,
     ServiceAction,
-    listFirewallPorts,
-    addFirewallPort,
 )
-from ndlmpanel_agent.exceptions.tool_exceptions import ToolExecutionException, PermissionDeniedException
+from utils.toolFunction.exceptions.tool_exceptions import ToolExecutionException, PermissionDeniedException
 from Exception.SecurityStatusReadException import SecurityStatusReadException
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
+from Exception.ExecutePermissionDeniedException import ExecutePermissionDeniedException
+from gateway.service.PrivilegedAgentClient import PrivilegedAgentClient, PrivilegedAgentRemoteError
+from privileged_agent.models import PrivilegedAction
 
 
 #测试
@@ -25,20 +25,47 @@ class FirewallService(Singleton):
         # self.fireWallDao: FireWallDaoInterface = FireWallDaoOrm()
         self.__fallbackPortRules: List[PortRule] = []
         self.__nextFallbackPortRuleId: int = 1
+        self.privilegedAgentClient = PrivilegedAgentClient()
+
+    def _agentContext(self):
+        return self.privilegedAgentClient.defaultContext("gateway.firewall")
+
+    def _callPrivilegedAgent(self, action: PrivilegedAction, payload: dict, userMessage: str):
+        try:
+            return self.privilegedAgentClient.call(action, payload, self._agentContext())
+        except PrivilegedAgentRemoteError as e:
+            if e.code in ["PERMISSION_DENIED", "PROXY_PERMISSION_DENIED"]:
+                raise ExecutePermissionDeniedException(
+                    innerMessage=e.details or e.message,
+                    userMessage=userMessage,
+                    cause=e,
+                )
+            raise BuiltinToolExecutionException(
+                innerMessage=e.details or e.message,
+                userMessage=userMessage,
+                cause=e,
+            )
+
+    def _innerMessage(self, error: Exception) -> str:
+        return getattr(error, "innerMessage", None) or str(error)
 
     def readComputerFirewallEnabled(self) -> bool:
         try:
-            firewallStatus = getFirewallStatus()
-            return bool(firewallStatus.isActive)
-        except (ToolExecutionException, PermissionDeniedException) as e:
+            firewallStatus = self._callPrivilegedAgent(
+                PrivilegedAction.FIREWALL_GET_STATUS,
+                {},
+                "读取防火墙状态失败",
+            )
+            return bool(firewallStatus["isActive"])
+        except ExecutePermissionDeniedException as e:
             raise SecurityStatusReadException(
-                innerMessage=str(e),
+                innerMessage=e.innerMessage,
                 userMessage="读取防火墙状态失败",
                 cause=e,
             )
-        except Exception as e:
+        except BuiltinToolExecutionException as e:
             raise SecurityStatusReadException(
-                innerMessage=str(e),
+                innerMessage=e.innerMessage,
                 userMessage="读取防火墙状态失败",
                 cause=e,
             )
@@ -223,12 +250,20 @@ class FirewallService(Singleton):
 
     def updateSecuritySwitchState(self, updateRequest: SecuritySwitchUpdate) -> SecuritySwitchState:
         if updateRequest.sshServiceEnabled is not None:
-            sshAction = ServiceAction.START if updateRequest.sshServiceEnabled else ServiceAction.STOP
+            sshAction = "start" if updateRequest.sshServiceEnabled else "stop"
             try:
-                manageSystemService("sshd", action=sshAction)
+                self._callPrivilegedAgent(
+                    PrivilegedAction.SERVICE_SET_STATE,
+                    {"serviceName": "sshd", "action": sshAction},
+                    "更新SSH服务状态失败",
+                )
             except Exception as e1:
                 try:
-                    manageSystemService("ssh", action=sshAction)
+                    self._callPrivilegedAgent(
+                        PrivilegedAction.SERVICE_SET_STATE,
+                        {"serviceName": "ssh", "action": sshAction},
+                        "更新SSH服务状态失败",
+                    )
                 except Exception as e2:
                     raise SecurityStatusReadException(
                         innerMessage=f"sshd更新失败: {e1}; ssh更新失败: {e2}",
@@ -238,28 +273,14 @@ class FirewallService(Singleton):
 
         if updateRequest.firewallEnabled is not None:
             try:
-                current = getFirewallStatus()
-                backend = str(current.backendType.value).lower()
-                firewallAction = ServiceAction.START if updateRequest.firewallEnabled else ServiceAction.STOP
-
-                if backend == "firewalld":
-                    manageSystemService("firewalld", action=firewallAction)
-                elif backend == "ufw":
-                    raise SecurityStatusReadException(
-                        innerMessage="当前后端为 ufw，暂未实现 enable/disable 逻辑",
-                        userMessage="更新防火墙状态失败",
-                    )
-                else:
-                    raise SecurityStatusReadException(
-                        innerMessage=f"不支持的防火墙后端: {backend}",
-                        userMessage="更新防火墙状态失败",
-                    )
-
-            except SecurityStatusReadException:
-                raise
+                self._callPrivilegedAgent(
+                    PrivilegedAction.FIREWALL_SET_ENABLED,
+                    {"enabled": updateRequest.firewallEnabled},
+                    "更新防火墙状态失败",
+                )
             except Exception as e:
                 raise SecurityStatusReadException(
-                    innerMessage=str(e),
+                    innerMessage=self._innerMessage(e),
                     userMessage="更新防火墙状态失败",
                     cause=e,
                 )
@@ -276,6 +297,7 @@ class FirewallService(Singleton):
             id=self.__nextFallbackPortRuleId,
             port=rule.port,
             protocol=rule.protocol,
+            ipVersion=rule.ipVersion,
             sourceIp=rule.sourceIp,
             destinationIp=rule.destinationIp,
             priority=rule.priority,
@@ -291,32 +313,40 @@ class FirewallService(Singleton):
             )
 
         try:
-            toolProtocol = self._toToolProtocol(rule.protocol)
-            addFirewallPort(
-                port=rule.port,
-                protocol=toolProtocol,
-                remark=f"src={rule.sourceIp};dst={rule.destinationIp};priority={rule.priority}",
+            createdRule = self._callPrivilegedAgent(
+                PrivilegedAction.FIREWALL_ADD_PORT_RULE,
+                {
+                    "port": rule.port,
+                    "protocol": self._toToolProtocol(rule.protocol),
+                    "ipVersion": rule.ipVersion,
+                    "sourceIp": rule.sourceIp,
+                    "destinationIp": rule.destinationIp,
+                    "priority": rule.priority,
+                    "action": rule.action,
+                },
+                "新增端口规则失败",
             )
-            self.__fallbackPortRules.append(fallbackRule)
-            self.__nextFallbackPortRuleId += 1
-        except (ToolExecutionException, PermissionDeniedException) as e:
-            self.__fallbackPortRules.append(fallbackRule)
-            self.__nextFallbackPortRuleId += 1
-            return fallbackRule
+        except (BuiltinToolExecutionException, ExecutePermissionDeniedException):
+            raise
         except Exception as e:
-            self.__fallbackPortRules.append(fallbackRule)
-            self.__nextFallbackPortRuleId += 1
-            return fallbackRule
+            raise BuiltinToolExecutionException(
+                innerMessage=self._innerMessage(e),
+                userMessage="新增端口规则失败",
+                cause=e,
+            )
 
+        self.__fallbackPortRules.append(fallbackRule)
+        self.__nextFallbackPortRuleId += 1
         rules = self.getPortRules()
         for item in reversed(rules):
-            if item.port == rule.port and item.protocol == rule.protocol:
+            if item.port == createdRule["port"] and item.protocol == self._toApiProtocol(createdRule["protocol"]):
                 return item
 
         return rules[-1] if rules else PortRule(
             id=1,
             port=rule.port,
             protocol=rule.protocol,
+            ipVersion=rule.ipVersion,
             sourceIp=rule.sourceIp,
             destinationIp=rule.destinationIp,
             priority=rule.priority,
@@ -327,7 +357,11 @@ class FirewallService(Singleton):
     
     def getPortRules(self) -> List[PortRule]:
         try:
-            toolRules = listFirewallPorts()
+            toolRules = self._callPrivilegedAgent(
+                PrivilegedAction.FIREWALL_LIST_RULES,
+                {},
+                "读取端口规则失败",
+            )
             if not toolRules and self.__fallbackPortRules:
                 return list(self.__fallbackPortRules)
 
@@ -335,82 +369,56 @@ class FirewallService(Singleton):
             apiRules: List[PortRule] = []
 
             for idx, item in enumerate(toolRules):
+                port = int(item["port"])
+                protocol = str(item["protocol"])
+                source_ip = item.get("sourceIp")
+                destination_ip = item.get("destinationIp")
+                policy = str(item["policy"])
+                ip_version = int(item.get("ipVersion") or self._detectIpVersion(source_ip, destination_ip))
                 apiRules.append(
                     PortRule(
                         id=self._nextRuleId(idx),
-                        port=item.port,
-                        protocol=self._toApiProtocol(item.protocol),
-                        sourceIp=item.sourceIp or "0.0.0.0/0",
-                        destinationIp="0.0.0.0/0",
+                        port=port,
+                        protocol=self._toApiProtocol(protocol),
+                        ipVersion=ip_version,
+                        sourceIp=source_ip or self._defaultAnyByIpVersion(ip_version),
+                        destinationIp=destination_ip or self._defaultAnyByIpVersion(ip_version),
                         priority=100,
-                        action=self._toApiAction(item.policy),
+                        action=self._toApiAction(policy),
                         createdTime=now,
                         updatedTime=now,
                     )
                 )
 
             return apiRules
-        except (ToolExecutionException, PermissionDeniedException) as e:
-            try:
-                fallbackRules = self._listPortRulesByUfwSudo()
-                if fallbackRules:
-                    return fallbackRules
-                if self.__fallbackPortRules:
-                    return list(self.__fallbackPortRules)
-                return fallbackRules
-            except Exception as e2:
-                if self.__fallbackPortRules:
-                    return list(self.__fallbackPortRules)
-                raise BuiltinToolExecutionException(
-                    innerMessage=f"tool读取失败: {e}; ufw兜底失败: {e2}",
-                    userMessage="读取端口规则失败",
-                    cause=e2,
-                )
         except Exception as e:
             if self.__fallbackPortRules:
                 return list(self.__fallbackPortRules)
             raise BuiltinToolExecutionException(
-                innerMessage=str(e),
+                innerMessage=self._innerMessage(e),
                 userMessage="读取端口规则失败",
                 cause=e,
             )
 
-    def _listPortRulesByUfwSudo(self) -> List[PortRule]:
-        result = subprocess.run(
-            ["sudo", "-n", "ufw", "status", "numbered"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "ufw status 执行失败")
-
-        now = datetime.now()
-        apiRules: List[PortRule] = []
-        pattern = re.compile(r"\[\s*\d+\]\s+(\d+)/(tcp|udp)\s+(\w+)\s+IN\s+(.*)", re.IGNORECASE)
-
-        for idx, line in enumerate(result.stdout.splitlines()):
-            matched = pattern.match(line.strip())
-            if not matched:
-                continue
-
-            source_text = matched.group(4).strip()
-            apiRules.append(
-                PortRule(
-                    id=self._nextRuleId(idx),
-                    port=int(matched.group(1)),
-                    protocol=self._toApiProtocol(matched.group(2)),
-                    sourceIp=source_text if source_text and source_text != "Anywhere" else "0.0.0.0/0",
-                    destinationIp="0.0.0.0/0",
-                    priority=100,
-                    action=self._toApiAction(matched.group(3)),
-                    createdTime=now,
-                    updatedTime=now,
-                )
+    def getSshLogs(self) -> dict:
+        try:
+            rawLogs = self._callPrivilegedAgent(
+                PrivilegedAction.SSH_LIST_LOGS,
+                {"maxLines": 500},
+                "读取SSH登录日志失败",
+            )
+            sshLogs = [SshLog.model_validate(item) for item in rawLogs]
+            return {
+                "total": len(sshLogs),
+                "list": [item.model_dump() for item in sshLogs],
+            }
+        except Exception as e:
+            raise BuiltinToolExecutionException(
+                innerMessage=self._innerMessage(e),
+                userMessage="读取SSH登录日志失败",
+                cause=e,
             )
 
-        return apiRules
-    
     def _toToolProtocol(self, protocol: int) -> str:
         return "tcp" if protocol == 1 else "udp"
 
@@ -424,6 +432,15 @@ class FirewallService(Singleton):
     def _nextRuleId(self, index: int) -> int:
         # 组员库没有规则ID，先用列表序号模拟
         return index + 1
+
+    def _defaultAnyByIpVersion(self, ipVersion: int) -> str:
+        return "::/0" if ipVersion == 6 else "0.0.0.0/0"
+
+    def _detectIpVersion(self, sourceIp: str | None, destinationIp: str | None) -> int:
+        for candidate in [sourceIp, destinationIp]:
+            if candidate and ":" in str(candidate):
+                return 6
+        return 4
 
     def _parseSshConfigFiles(self, filePaths: List[Path]) -> dict[str, List[str]]:
         parsed: dict[str, List[str]] = {}

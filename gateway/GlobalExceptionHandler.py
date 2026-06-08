@@ -18,6 +18,9 @@ from Exception.ExecutePermissionDeniedException import ExecutePermissionDeniedEx
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
 from Exception.SecurityStatusReadException import SecurityStatusReadException
 from Exception.InvalidParamException import InvalidParamException
+from Exception.TerminalAuthenticationException import TerminalAuthenticationException
+from Exception.TerminalEnvironmentUnavailableException import TerminalEnvironmentUnavailableException
+from Exception.TerminalProcessException import TerminalProcessException
 
 
 def ExceptionHandler(exception: Type[GatewayAbstractException]):
@@ -106,5 +109,19 @@ class GlobalExceptionHandler:
                                           exception: InvalidParamException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
+    @ExceptionHandler(TerminalAuthenticationException)
+    async def handleTerminalAuthenticationException(self, request: Request,
+                                                    exception: TerminalAuthenticationException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(TerminalEnvironmentUnavailableException)
+    async def handleTerminalEnvironmentUnavailableException(self, request: Request,
+                                                            exception: TerminalEnvironmentUnavailableException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
+
+    @ExceptionHandler(TerminalProcessException)
+    async def handleTerminalProcessException(self, request: Request,
+                                             exception: TerminalProcessException) -> ResponseModel:
+        return Response.error(msg=exception.userMessage)
 
 

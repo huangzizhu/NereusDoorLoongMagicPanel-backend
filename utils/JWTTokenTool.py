@@ -6,8 +6,8 @@ from Exception.AccessTokenExpiryException import AccessTokenExpiryException
 from Exception.RefreshTokenExpiryException import RefreshTokenExpiryException
 from Exception.InvalidTokenException import InvalidTokenException
 
-# 秘钥（密钥用来加密和解密JWT）
-SECRET_KEY = "test_secret_key"
+# 秘钥（密钥用来加密和解密JWT，至少 32 字节以满足 HS256 推荐长度）
+SECRET_KEY = "test_secret_key_change_to_real_key"
 
 def getUserId(accessToken) -> int:
     try:
