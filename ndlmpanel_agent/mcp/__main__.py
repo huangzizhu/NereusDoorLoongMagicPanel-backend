@@ -10,7 +10,7 @@ from .transports.stdio import stdioServe
 
 
 def buildDispatcher() -> McpDispatcher:
-    return McpDispatcher(ToolRegistry())
+    return McpDispatcher(ToolRegistry.withDefaultTools())
 
 
 def main(argv: list[str] | None = None) -> int:

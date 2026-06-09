@@ -46,7 +46,7 @@ SELECTED_TOOL_NAMES: tuple[str, ...] = (
     "readTextFile",
     "writeTextFile",
     "createFile",
-    "createDirectory",
+    # createDirectory: 与 agent-core-mcp 冲突，由 agent-core-mcp 提供
     "renameFileOrDirectory",
     "copyFile",
     "deleteFile",
@@ -66,11 +66,7 @@ SELECTED_TOOL_NAMES: tuple[str, ...] = (
     "checkPortConnectivity",
     "querySystemLogs",
     # Ops-specific tools.
-    "manageSystemService",
     "getFirewallStatus",
-    "listFirewallPorts",
-    "addFirewallPort",
-    "removeFirewallPort",
     "checkDockerInstalled",
     "getDockerContainers",
     "getDockerContainerInfo",
@@ -80,7 +76,7 @@ SELECTED_TOOL_NAMES: tuple[str, ...] = (
     "restartDockerContainer",
     "checkNginxInstalled",
     "getNginxStatus",
-    "testNginxConfig",
+    # testNginxConfig: 由特权版本 testNginxConfigPrivileged 覆盖
     "getNginxSiteList",
     "getNginxSiteConfig",
     "checkDatabaseInstalled",
@@ -108,7 +104,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "readTextFile": "Read text file content.",
     "writeTextFile": "Write text content to an existing file. If the file does not exist, call createFile first.",
     "createFile": "Create an empty file.",
-    "createDirectory": "Create a directory, including missing parents.",
+    # createDirectory description removed — tool provided by agent-core-mcp
     "renameFileOrDirectory": "Rename or move a file or directory.",
     "copyFile": "Copy a file.",
     "deleteFile": "Delete a file or symbolic link.",
@@ -125,11 +121,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "pingHost": "Ping a host and summarize reachability and packet loss.",
     "checkPortConnectivity": "Check TCP connectivity to a host and port.",
     "querySystemLogs": "Query system logs from journalctl.",
-    "manageSystemService": "Start, stop, restart, enable, disable, or inspect a systemd service.",
     "getFirewallStatus": "Inspect active firewall backend and status.",
-    "listFirewallPorts": "List firewall port rules using the direct tool path. This may require root or passwordless sudo; prefer listFirewallPortsPrivileged when available.",
-    "addFirewallPort": "Allow a firewall port rule using the direct sudo fallback. Prefer addFirewallPortPrivileged when available.",
-    "removeFirewallPort": "Remove a firewall port rule using the direct sudo fallback. Prefer removeFirewallPortPrivileged when available.",
     "checkDockerInstalled": "Check whether Docker is installed.",
     "getDockerContainers": "List Docker containers.",
     "getDockerContainerInfo": "Inspect one Docker container with full docker inspect output. This may return sensitive or very large data; prefer getDockerContainerSummary.",
@@ -139,17 +131,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "restartDockerContainer": "Restart a Docker container.",
     "checkNginxInstalled": "Check whether Nginx is installed.",
     "getNginxStatus": "Inspect Nginx runtime status.",
-    "testNginxConfig": "Run nginx configuration validation using the direct sudo fallback. Prefer testNginxConfigPrivileged when available.",
+    # testNginxConfig: 由特权版本 testNginxConfigPrivileged 覆盖
     "getNginxSiteList": "List known Nginx site configurations.",
     "getNginxSiteConfig": "Read one Nginx site configuration.",
     "checkDatabaseInstalled": "Check whether a database engine is installed.",
     "getDatabaseStatus": "Inspect database service status.",
-    "executeCommand": "Execute one argv-style system command without shell expansion. stdio mode only.",
+    # executeCommand: 由 agent-core-mcp 的 runCommand/runShellCommand 覆盖
     "listProcessesBrief": "Return a compact process list for agents with limit, sorting, and optional command text.",
     "getProcessAnomalies": "Return a compact list of zombie processes. Set includeReparented=true to also inspect processes reparented to PID 1.",
     "getDockerContainerSummary": "Return a compact Docker container summary without full docker inspect details.",
     "testNginxConfigPrivileged": "Validate Nginx configuration through the privileged agent.",
-    "listFirewallPortsPrivileged": "List firewall port rules through the privileged agent.",
+    "listFirewallPortsPrivileged": "List firewall port rules through the privileged agent. Return results as a markdown table with columns: 序号(No.), 端口(Port), 协议(Protocol), 策略(Policy), IP版本(IP Version), 源IP(Source IP), 目标IP(Destination IP).",
     "addFirewallPortPrivileged": "Add an allow firewall port rule through the privileged agent.",
     "removeFirewallPortPrivileged": "Remove an allow firewall port rule through the privileged agent.",
     "manageSystemServicePrivileged": "Inspect or change an allowed systemd service through the privileged agent for non-status actions.",
@@ -164,13 +156,7 @@ TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
         "preferredAlternative": "getDockerContainerSummary",
     },
     "writeTextFile": {"requiresExistingFile": True, "createFileBeforeWrite": True},
-    "testNginxConfig": {"requiresPrivilege": True, "sudoFallback": True},
-    "listFirewallPorts": {"requiresPrivilege": True, "sudoFallback": True},
-    "addFirewallPort": {"requiresPrivilege": True, "sudoFallback": True},
-    "removeFirewallPort": {
-        "requiresPrivilege": True,
-        "sudoFallback": True,
-    },
+    # testNginxConfig / listFirewallPorts / addFirewallPort / removeFirewallPort: 由特权版本覆盖
     "listProcessesBrief": {"agentOptimized": True},
     "getProcessAnomalies": {"agentOptimized": True},
     "getDockerContainerSummary": {"agentOptimized": True},
@@ -474,16 +460,6 @@ def buildDefaultTools(includeStdioOnly: bool = True) -> list[AdaptedTool]:
                 name=name,
                 func=fn,
                 riskLevel=_mcpOnlyRiskLevel(name),
-            )
-        )
-
-    if includeStdioOnly:
-        tools.append(
-            AdaptedTool(
-                name=executeCommand.__name__,
-                func=executeCommand,
-                riskLevel=ToolRiskLevel.DANGEROUS,
-                stdinOnly=True,
             )
         )
 

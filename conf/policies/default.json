@@ -1,0 +1,26 @@
+{
+    "_comment": "默认安全策略 — 平衡安全性与可用性",
+    "version": "1.0",
+    "risk_thresholds": {
+        "safe": 20,
+        "low": 40,
+        "medium": 60,
+        "high": 80
+    },
+    "rules": {
+        "block_patterns": [
+            "rm -rf /", "mkfs.*", "dd if=/dev/zero of=/dev",
+            "iptables -F", "curl | bash", "wget | sh",
+            "python -c", "sudo su", ":(){ :|:& };:"
+        ],
+        "protected_paths": [
+            "/etc/shadow", "/etc/passwd", "/etc/sudoers",
+            "/boot", "/usr/lib", "/lib", "/proc", "/sys"
+        ],
+        "require_approval": [
+            "systemctl restart", "systemctl stop",
+            "kill", "chmod", "chown", "firewall-cmd"
+        ],
+        "max_output_chars": 4000
+    }
+}

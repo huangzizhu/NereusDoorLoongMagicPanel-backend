@@ -72,7 +72,8 @@ class McpDispatcher:
         return {}
 
     def _handle_tools_list(self, params: dict[str, Any]) -> dict:
-        return {"tools": self._reg.listTools()}
+        listTools = getattr(self._reg, "listMcpTools", self._reg.listTools)
+        return {"tools": listTools()}
 
     def _handle_tools_call(self, params: dict[str, Any]) -> dict:
         name = params.get("name")

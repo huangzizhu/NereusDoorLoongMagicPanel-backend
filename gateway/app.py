@@ -16,6 +16,7 @@ from gateway.controller.TerminalController import TerminalController
 from gateway.controller.DockerController import DockerController
 from gateway.controller.DatabaseController import DatabaseController
 from gateway.controller.NginxController import NginxController
+from gateway.controller.AgentController import AgentController
 
 from starlette.formparsers import MultiPartParser
 
@@ -42,6 +43,7 @@ class Application:
         self.controllers.append(DockerController())
         self.controllers.append(DatabaseController())
         self.controllers.append(NginxController())
+        self.controllers.append(AgentController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()

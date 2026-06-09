@@ -3,7 +3,9 @@ from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
 from gateway.service.FirewallService import FirewallService
-from pojo.FireWall import SecuritySwitchState,SecuritySwitchUpdate,PortRuleCreate,PortRule, SshConfig,SshConfigUpdate
+from pojo.FireWall import SecuritySwitchState, SecuritySwitchUpdate, PortRuleCreate, PortRuleDeleteRequest, PortRule, SshConfig, SshConfigUpdate
+
+
 class FirewallController(AbstractController):
     @singletonInit
     def __init__(self):
@@ -45,7 +47,19 @@ class FirewallController(AbstractController):
                     "list":[r.model_dump() for r in rules],
                 }
             )
-        
+
+        @self.router.delete("/port-rules")
+        def deletePortRule(rule: PortRuleDeleteRequest) -> ResponseModel:
+            result = self.firewallService.deletePortRule(rule)
+            rules = self.firewallService.getPortRules()
+            return Response.success(
+                data={
+                    "deleted": result,
+                    "total": len(rules),
+                    "list": [item.model_dump() for item in rules],
+                }
+            )
+
         @self.router.get("/port-rules")
         def getPortRules() -> ResponseModel:
             rules = self.firewallService.getPortRules()

@@ -1,0 +1,15 @@
+{
+    "llm_provider": "deepseek",
+    "llm_endpoint": "https://api.deepseek.com/anthropic",
+    "llm_model": "deepseek-v4-pro",
+    "llm_max_tokens": 65536,
+    "llm_temperature": 0.1,
+    "safety_policy": "strict",
+    "execution_user": "osagent-exec",
+    "trace_db_path": "/var/lib/ndlmpanel/traces.db",
+    "max_tool_rounds": 0,
+    "max_tool_calls_per_round": 0,
+    "tool_timeout_seconds": 60,
+    "llm_retry_count": 3,
+    "llm_retry_delay": 2.0
+}

@@ -1,0 +1,26 @@
+{
+    "_comment": "严格安全策略 — 适用于生产/高风险环境",
+    "version": "1.0",
+    "risk_thresholds": {
+        "safe": 10,
+        "low": 25,
+        "medium": 45,
+        "high": 65
+    },
+    "rules": {
+        "block_patterns": [
+            "rm -rf", "mkfs.*", "dd if=/dev/zero", "dd if=",
+            "iptables -F", "curl | bash", "wget | sh",
+            "python -c", "sudo su", ":(){ :|:& };:",
+            "shutdown", "reboot", "halt", "poweroff",
+            "chmod 777", "chmod 000", "chown root"
+        ],
+        "protected_paths": [
+            "/etc/shadow", "/etc/passwd", "/etc/sudoers",
+            "/boot", "/usr/lib", "/lib", "/proc", "/sys",
+            "/root", "~/.ssh", "/var/lib", "/etc/systemd"
+        ],
+        "require_approval": ["all_write"],
+        "max_output_chars": 2000
+    }
+}

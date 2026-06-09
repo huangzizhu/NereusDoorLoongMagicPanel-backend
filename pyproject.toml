@@ -16,6 +16,12 @@ dependencies = [
     "websockets>=15.0.1",
 ]
 
+[tool.ndlmpanel-agent.mcp-servers.ndlmpanel-mcp]
+command = ["python", "-m", "ndlmpanel_agent.mcp"]
+
+[tool.ndlmpanel-agent.mcp-servers.agent-core-mcp]
+command = ["python", "-m", "agent.agent_mcp"]
+
 [dependency-groups]
 dev = [
     "black>=26.3.1",

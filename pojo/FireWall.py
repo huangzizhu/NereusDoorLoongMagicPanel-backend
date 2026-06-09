@@ -24,6 +24,14 @@ class PortRuleCreate(PortRuleBase):
     pass
 
 
+class PortRuleDeleteRequest(BaseModel):
+    port: int = Field(..., ge=1, le=65535, description="端口号")
+    protocol: int = Field(..., ge=0, le=1, description="协议类型：0=UDP, 1=TCP")
+    ipVersion: Optional[int] = Field(None, ge=4, le=6, description="IP版本：4=IPv4, 6=IPv6")
+    sourceIp: Optional[str] = Field(None, max_length=50, description="来源IP，支持CIDR")
+    destinationIp: Optional[str] = Field(None, max_length=50, description="目标IP，支持CIDR")
+
+
 class PortRuleUpdate(BaseModel):
     # 更新时字段可选
     port: Optional[int] = Field(None, ge=1, le=65535)

@@ -27,6 +27,7 @@ class GlobalInterceptor(BaseHTTPMiddleware):
         self.websocketPaths = {
             "/terminal/ws",
             "/terminal/admin/ws",
+            "/agent/ws",
         }
         self.ssePath = {
             "/system/health",

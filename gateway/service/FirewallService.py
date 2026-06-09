@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List
 import re
 import subprocess
-from pojo.FireWall import PortRuleCreate,PortRule, SshConfig,SshConfigUpdate, SshLog
+from pojo.FireWall import PortRuleCreate, PortRuleDeleteRequest, PortRule, SshConfig, SshConfigUpdate, SshLog
 from pathlib import Path
 from utils.toolFunction import (
     manageSystemService,
@@ -400,6 +400,43 @@ class FirewallService(Singleton):
                 cause=e,
             )
 
+    def deletePortRule(self, rule: PortRuleDeleteRequest) -> dict:
+        try:
+            deletedRule = self._callPrivilegedAgent(
+                PrivilegedAction.FIREWALL_REMOVE_PORT_RULE,
+                {
+                    "port": rule.port,
+                    "protocol": self._toToolProtocol(rule.protocol),
+                    "ipVersion": rule.ipVersion,
+                    "sourceIp": rule.sourceIp,
+                    "destinationIp": rule.destinationIp,
+                },
+                "删除端口规则失败",
+            )
+        except (BuiltinToolExecutionException, ExecutePermissionDeniedException):
+            raise
+        except Exception as e:
+            raise BuiltinToolExecutionException(
+                innerMessage=self._innerMessage(e),
+                userMessage="删除端口规则失败",
+                cause=e,
+            )
+
+        self.__fallbackPortRules = [
+            item for item in self.__fallbackPortRules
+            if not self._isSameRule(item, rule)
+        ]
+
+        return {
+            "success": True,
+            "port": int(deletedRule["port"]),
+            "protocol": self._toApiProtocol(deletedRule["protocol"]),
+            "ipVersion": int(deletedRule.get("ipVersion") or rule.ipVersion or self._detectIpVersion(rule.sourceIp, rule.destinationIp)),
+            "sourceIp": deletedRule.get("sourceIp") or rule.sourceIp,
+            "destinationIp": deletedRule.get("destinationIp") or rule.destinationIp,
+            "policy": str(deletedRule.get("policy", "removed")),
+        }
+
     def getSshLogs(self) -> dict:
         try:
             rawLogs = self._callPrivilegedAgent(
@@ -441,6 +478,17 @@ class FirewallService(Singleton):
             if candidate and ":" in str(candidate):
                 return 6
         return 4
+
+    def _isSameRule(self, item: PortRule, rule: PortRuleDeleteRequest) -> bool:
+        if item.port != rule.port or item.protocol != rule.protocol:
+            return False
+        if rule.ipVersion is not None and item.ipVersion != rule.ipVersion:
+            return False
+        if rule.sourceIp is not None and item.sourceIp != rule.sourceIp:
+            return False
+        if rule.destinationIp is not None and item.destinationIp != rule.destinationIp:
+            return False
+        return True
 
     def _parseSshConfigFiles(self, filePaths: List[Path]) -> dict[str, List[str]]:
         parsed: dict[str, List[str]] = {}

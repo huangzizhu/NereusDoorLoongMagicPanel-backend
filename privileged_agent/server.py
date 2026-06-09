@@ -37,7 +37,7 @@ class PrivilegedAgentServer:
         self._server_socket: socket.socket | None = None
         self._running = True
         self.allowed_service_actions = {"start", "stop", "restart", "enable", "disable"}
-        self.allowed_service_names = {"ssh", "sshd", "firewalld"}
+        self.allowed_service_names = {"ssh", "sshd", "firewalld", "nginx", "docker"}
 
     def _run_command(self, command: list[str]) -> subprocess.CompletedProcess:
         result = subprocess.run(

@@ -75,16 +75,28 @@ class DockerService(Singleton):
         return self._wrap("读取 Docker 容器日志失败", getDockerContainerLogs, containerId, tailLines=tailLines)
 
     def startContainer(self, containerId: str):
-        self._wrap("启动 Docker 容器失败", startDockerContainer, containerId)
-        return {"containerId": containerId, "isStarted": True}
+        result = self._wrap("启动 Docker 容器失败", startDockerContainer, containerId)
+        return {
+            "containerId": result["containerId"],
+            "isStarted": True,
+            **result,
+        }
 
     def stopContainer(self, containerId: str):
-        self._wrap("停止 Docker 容器失败", stopDockerContainer, containerId)
-        return {"containerId": containerId, "isStopped": True}
+        result = self._wrap("停止 Docker 容器失败", stopDockerContainer, containerId)
+        return {
+            "containerId": result["containerId"],
+            "isStopped": True,
+            **result,
+        }
 
     def restartContainer(self, containerId: str):
-        self._wrap("重启 Docker 容器失败", restartDockerContainer, containerId)
-        return {"containerId": containerId, "isRestarted": True}
+        result = self._wrap("重启 Docker 容器失败", restartDockerContainer, containerId)
+        return {
+            "containerId": result["containerId"],
+            "isRestarted": True,
+            **result,
+        }
 
     def deleteContainer(self, containerId: str):
         self._wrap("删除 Docker 容器失败", deleteDockerContainer, containerId)
