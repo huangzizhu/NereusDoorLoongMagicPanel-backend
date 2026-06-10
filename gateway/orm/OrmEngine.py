@@ -21,6 +21,8 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
 # 删表前会检查旧 schema 摘要（通过 column count），匹配时才重建
 _DROP_AND_RECREATE: dict[str, int] = {
     "agent_messages": 6,   # 旧列数
+    "agent_token_usage": 11,  # 去掉 cost 列，旧表 11 列（原始结构含 inputCost/outputCost/totalCost）
+    "agent_model_pricing": 0, # 全新表，0 表示不存在就建
 }
 
 

@@ -153,8 +153,12 @@ class AgentTokenUsageResponse(BaseModel):
     traceId: Optional[str] = None
     model: str
     inputTokens: int
+    cachedInputTokens: int = 0
+    nonCachedInputTokens: int = 0
     outputTokens: int
     totalTokens: int
+    cachedInputCost: float = 0.0
+    nonCachedInputCost: float = 0.0
     inputCost: float
     outputCost: float
     totalCost: float
@@ -165,8 +169,12 @@ class AgentTokenUsageResponse(BaseModel):
 class AgentSessionBillingResponse(BaseModel):
     sessionId: str
     totalInputTokens: int = 0
+    totalCachedInputTokens: int = 0
+    totalNonCachedInputTokens: int = 0
     totalOutputTokens: int = 0
     totalTokens: int = 0
+    totalCachedInputCost: float = 0.0
+    totalNonCachedInputCost: float = 0.0
     totalInputCost: float = 0.0
     totalOutputCost: float = 0.0
     totalCost: float = 0.0

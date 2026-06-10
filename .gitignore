@@ -18,3 +18,7 @@ env/
 .uv/
 # 环境变量
 .env
+
+# SQLite 数据库文件
+panel.db
+*.db

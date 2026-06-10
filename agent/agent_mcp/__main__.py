@@ -3,6 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
+
+# Load .env so TAVILY_API_KEY is available in the environment
+_env = Path(__file__).resolve().parents[2] / ".env"
+if _env.exists():
+    with open(_env) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip("\"'")
+            if key and not os.environ.get(key):
+                os.environ[key] = val
 
 try:
     from ndlmpanel_agent.mcp.server.dispatcher import McpDispatcher

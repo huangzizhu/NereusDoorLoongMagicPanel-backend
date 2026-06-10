@@ -32,8 +32,7 @@ from agent.shared.types import AgentConfig, EventType
 from agent.integration.session import AgentSession
 from agent.agent_router.router import AgentMode
 from agent.agent_core.prompt_builder import PromptBuilder
-from ndlmpanel_agent.mcp.server.registry import ToolRegistry
-from agent.context_mgmt.collectors import getSystemSnapshot
+# ToolRegistry / getSystemSnapshot 不再使用 — 已从 prompt 中移除
 
 loadDotenv(".env", override=False)
 REPORT: list[str] = []
@@ -222,18 +221,14 @@ async def main():
     # ═══ S6: Prompt 前缀构造展示 ═══
     h(2, "场景 6: Prompt 前缀构造 — 4 层 KV Cache 优化")
 
-    reg = ToolRegistry.withDefaultTools()
-    snap = getSystemSnapshot()
-
     builder = PromptBuilder(
         systemPrompt="你是一个专业的智能运维助手...(v1.1.0, 含 6 个诊断技能)",
         safetyRules="禁止 rm -rf /, mkfs, chmod 777, ... (9 条禁止规则 + 注入检测)",
-        toolSchemas=reg.listTools(),
     )
     from agent.agent_router.router import getModePrompt
     modePrompt = getModePrompt(AgentMode.AGENT)
 
-    msgs = builder.build("帮我检查系统状态", systemInfo=snap)
+    msgs = builder.build("帮我检查系统状态")
     # 注入模式提示
     if msgs and msgs[0]["role"] == "system":
         msgs[0]["content"] += modePrompt

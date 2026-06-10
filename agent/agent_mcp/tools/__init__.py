@@ -32,6 +32,7 @@ from .project import (
     summarizeFile,
     summarizeWorkspace,
 )
+from .web import webFetch, webSearch
 from .workspace import getWorkspaceContext
 
 __all__ = [
@@ -65,6 +66,8 @@ __all__ = [
     "statPaths",
     "summarizeFile",
     "summarizeWorkspace",
+    "webFetch",
+    "webSearch",
     "writeFile",
     "writeFiles",
 ]

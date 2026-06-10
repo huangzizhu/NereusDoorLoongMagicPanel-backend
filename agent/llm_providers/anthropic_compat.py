@@ -101,12 +101,12 @@ class AnthropicProvider(LLMProvider):
             "model": self._model,
             "max_tokens": self._maxTokens,
             "temperature": self._temperature,
-            "messages": self._convertMessages(messages),
-            "stream": stream,
         }
+        # tools 放在 messages 之前 → 使 tool schema 进入 KV-cache 前缀
         if self._tools:
-            # OpenAI Function Calling 格式 → Anthropic tools 格式
             body["tools"] = self._convertTools(self._tools)
+        body["messages"] = self._convertMessages(messages)
+        body["stream"] = stream
         return json.dumps(body).encode("utf-8")
 
     @staticmethod

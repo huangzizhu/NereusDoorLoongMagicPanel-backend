@@ -36,6 +36,7 @@ from ..tools.filesystem import (
     writeFile,
     writeFiles,
 )
+from ..tools.web import webFetch, webSearch
 from ..tools.project import (
     detectProjectCommands,
     explainToolError,
@@ -82,6 +83,8 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "explainToolError": "read_only",
     "getRecentCommandResults": "read_only",
     "runCommand": "dangerous",
+    "webFetch": "read_only",
+    "webSearch": "read_only",
     "runShellCommand": "dangerous",
 }
 
@@ -123,6 +126,8 @@ TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
         "preferredDefaultCommandTool": True,
         "descriptionHint": "Use this by default for argv-style commands. It does not interpret pipes, redirects, globs, variables, or shell operators.",
     },
+    "webFetch": {"agentCore": True},
+    "webSearch": {"agentCore": True},
     "runShellCommand": {
         "agentCore": True,
         "usesShell": True,
@@ -163,6 +168,8 @@ AGENT_TOOL_FUNCTIONS: tuple[Callable[..., Any], ...] = (
     summarizeWorkspace,
     explainToolError,
     getRecentCommandResults,
+    webFetch,
+    webSearch,
     runCommand,
     runShellCommand,
 )

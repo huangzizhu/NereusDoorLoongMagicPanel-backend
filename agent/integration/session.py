@@ -84,7 +84,7 @@ class AgentSession:
 
         # 核心组件
         safety = RuleEngine(config.safety_policy)
-        promptBuilder = PromptBuilder(sysPrompt, safetyRules, registry.listTools())
+        promptBuilder = PromptBuilder(sysPrompt, safetyRules)
 
         # LLM Provider — 由工厂按 config.llm_provider 选择，
         # 无 api_key 时自动回退 MockProvider
@@ -113,11 +113,7 @@ class AgentSession:
     ):
         normalized = toolSource.replace("-", "_").lower()
         if normalized in {"current_mcp", "mcp"}:
-            if mcpServers:
-                raise ValueError(
-                    "toolSource=current_mcp does not accept mcpServers; "
-                    "use toolSource=stdio for external MCP servers"
-                )
+            # current_mcp 模式下忽略 mcpServers（从 stdio 切回时 DB 可能残留旧值）
             registry = ToolRegistry.withDefaultTools()
             dispatcher = McpDispatcher(registry)
             bridge = None

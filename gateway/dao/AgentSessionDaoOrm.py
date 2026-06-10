@@ -250,20 +250,17 @@ class AgentSessionDaoOrm(Singleton):
             session.close()
 
     def getRecentConversationHistory(self, sessionId: str,
-                                     limit: int = 20) -> list[dict]:
-        """获取最近对话历史（OpenAI 消息格式，含工具调用链）。
+                                     limit: int = 0) -> list[dict]:
+        """获取全部对话历史（OpenAI 消息格式，含工具调用链）。
 
-        重构完整 ReAct 调用序列以便模型理解上下文。
-        返回格式示例：
-            {"role": "assistant", "content": null, "tool_calls": [...]}
-            {"role": "tool", "tool_call_id": "xxx", "content": "..."}
+        此方法返回 session 的全量消息（不再截断），
+        由上游 compressHistory() 按 token 预算压缩。
         """
         session = self.SessionLocal()
         try:
             rows = session.query(AgentMessageOrm).filter(
                 AgentMessageOrm.sessionId == sessionId,
-            ).order_by(AgentMessageOrm.messageId.desc()).limit(limit).all()
-            rows.reverse()
+            ).order_by(AgentMessageOrm.messageId.asc()).all()
 
             result: list[dict] = []
             for row in rows:

@@ -252,13 +252,19 @@ class AgentGatewayService(Singleton):
 
     async def _recordTokenUsage(self, sessionId: str, traceId: str | None,
                                  session, usage: dict) -> None:
-        """记录本轮 LLM 调用的 token 用量。"""
+        """记录本轮 LLM 调用的 token 用量（含缓存命中统计）。"""
         if not usage:
             return
         inputTokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
         outputTokens = usage.get("completion_tokens") or usage.get("output_tokens") or 0
         if not inputTokens and not outputTokens:
             return
+        # 提取缓存命中 tokens（DeepSeek / OpenAI 兼容格式）
+        cachedInputTokens = (
+            usage.get("prompt_cache_hit_tokens")
+            or usage.get("prompt_tokens_details", {}).get("cached_tokens")
+            or 0
+        )
         # 获取模型名
         model = "unknown"
         try:
@@ -272,6 +278,7 @@ class AgentGatewayService(Singleton):
             model=model,
             inputTokens=int(inputTokens),
             outputTokens=int(outputTokens),
+            cachedInputTokens=int(cachedInputTokens),
             traceId=traceId,
         )
 

@@ -175,21 +175,38 @@ class AgentSessionService(Singleton):
     # ── Token 计费 ──
 
     def getTokenUsage(self, sessionId: str, userId: int) -> list:
-        if self.dao.getSession(sessionId, userId) is None:
+        session = self.dao.getSession(sessionId, userId)
+        if session is None:
             raise InvalidParamException(
                 userMessage=f"不存在 sessionId 为 {sessionId} 的 Agent 会话"
             )
+        # 获取 credentialId 以匹配用户自定义价
+        credentialId = self._getCredentialId(session)
         from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
-        from pojo.Agent import AgentTokenUsageResponse
         usageDao = AgentTokenUsageDaoOrm()
-        rows = usageDao.getSessionUsage(sessionId)
-        return [AgentTokenUsageResponse.model_validate(r) for r in rows]
+        return usageDao.getSessionUsage(sessionId, credentialId=credentialId)
 
     def getSessionBilling(self, sessionId: str, userId: int) -> dict:
-        if self.dao.getSession(sessionId, userId) is None:
+        session = self.dao.getSession(sessionId, userId)
+        if session is None:
             raise InvalidParamException(
                 userMessage=f"不存在 sessionId 为 {sessionId} 的 Agent 会话"
             )
+        # 获取 credentialId 以匹配用户自定义价
+        credentialId = self._getCredentialId(session)
         from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
         usageDao = AgentTokenUsageDaoOrm()
-        return usageDao.getSessionBilling(sessionId)
+        return usageDao.getSessionBilling(sessionId, credentialId=credentialId)
+
+    @staticmethod
+    def _getCredentialId(session) -> int | None:
+        """从 session 对象获取 credentialId，用于价格匹配。"""
+        from gateway.dao.AgentConfigDaoOrm import AgentConfigDaoOrm
+        profileId = getattr(session, "profileId", None)
+        if profileId is None:
+            return None
+        try:
+            profile = AgentConfigDaoOrm().getProfileById(profileId)
+            return profile.credentialId if profile else None
+        except Exception:
+            return None

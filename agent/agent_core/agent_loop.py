@@ -19,7 +19,6 @@ from ndlmpanel_agent.mcp.server.dispatcher import McpDispatcher
 from ndlmpanel_agent.mcp.protocol.json_rpc import encodeRequest
 from agent.agent_core.prompt_builder import PromptBuilder
 from agent.llm_providers.base import LLMProvider
-from agent.context_mgmt.collectors import getSystemSnapshot
 from agent.context_mgmt.compressor import compressHistory
 from agent.trace_log.recorder import TraceRecorder
 
@@ -95,7 +94,6 @@ class AgentCore:
         self,
         userMessage: str,
         stream: EventStream,
-        systemInfo: dict | None = None,
         conversationHistory: list[dict] | None = None,
     ) -> None:
         """运行 Agent 循环。
@@ -104,8 +102,7 @@ class AgentCore:
         （DONE 或 ERROR），避免消费端 `async for` 永久挂起。
         """
         try:
-            await self._runLoop(userMessage, stream, systemInfo,
-                                conversationHistory)
+            await self._runLoop(userMessage, stream, conversationHistory)
         except asyncio.CancelledError:
             stream.emit(EventType.ERROR, {"message": "会话已取消"})
             raise
@@ -117,7 +114,6 @@ class AgentCore:
         self,
         userMessage: str,
         stream: EventStream,
-        systemInfo: dict | None,
         conversationHistory: list[dict] | None,
     ) -> None:
         traceId = stream.traceId
@@ -133,15 +129,8 @@ class AgentCore:
         self._trace(traceId, sessionId, "input.received",
                     {"input": userMessage[:200]})
 
-        # 自动采集 OS 快照（L3 层）
-        if systemInfo is None:
-            try:
-                systemInfo = getSystemSnapshot()
-            except Exception:
-                _logger.warning("OS 快照采集失败，跳过", exc_info=True)
-
         msgs = self._promptBuilder.build(
-            userMessage, systemInfo, conversationHistory,
+            userMessage, conversationHistory=conversationHistory,
         )
         state = LoopState.THINKING
         roundCount = 0

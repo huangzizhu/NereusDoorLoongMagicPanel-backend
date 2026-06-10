@@ -118,14 +118,15 @@ class OpenAIProvider(LLMProvider):
     def _buildBody(self, messages: list[dict], stream: bool) -> bytes:
         body: dict = {
             "model": self._model,
-            "messages": messages,
-            "max_tokens": self._maxTokens,
-            "temperature": self._temperature,
-            "stream": stream,
         }
+        # tools 放在 messages 之前 → 使 tool schema 进入 KV-cache 前缀
         if self._tools:
             body["tools"] = self._tools
             body["tool_choice"] = "auto"
+        body["messages"] = messages
+        body["max_tokens"] = self._maxTokens
+        body["temperature"] = self._temperature
+        body["stream"] = stream
         return json.dumps(body).encode("utf-8")
 
     def _buildRequest(self, body: bytes) -> urllib.request.Request:
