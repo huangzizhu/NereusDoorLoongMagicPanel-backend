@@ -116,6 +116,46 @@ class AgentGatewayService(Singleton):
                         await self._send(websocket, sendLock, self._serverEvent(
                             "error", sessionId, None, {"message": "审批动作不存在或已处理"}
                         ))
+                elif msgType == "plan":
+                    approved = bool(payload.get("approved"))
+                    reason = str(payload.get("reason") or "")
+                    runtime = self._runtimeSessions.get(sessionId)
+                    ok = False
+                    if runtime is not None:
+                        ok = runtime.approvePlan() if approved else runtime.rejectPlan(reason)
+                    if not ok:
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "error", sessionId, None, {"message": "无待审批的计划或计划已处理"}
+                        ))
+                elif msgType == "switch_mode":
+                    mode_str = str(payload.get("mode") or "")
+                    try:
+                        target_mode = AgentMode(mode_str)
+                    except ValueError:
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "error", sessionId, None,
+                            {"message": f"不支持的模式: {mode_str}"}
+                        ))
+                        continue
+
+                    # 1. 持久化到 DB（不管 runtime 是否存在都要写）
+                    self.sessionDao.updateMode(sessionId, target_mode.value)
+
+                    # 2. 如果运行时 session 存在 → 即时生效
+                    runtime = self._runtimeSessions.get(sessionId)
+                    if runtime is not None:
+                        runtime.switchMode(target_mode)
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "mode_changed", sessionId, None,
+                            {"mode": target_mode.value}
+                        ))
+                    else:
+                        # 运行时不存在 → 告知用户下次会话生效
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "mode_changed", sessionId, None,
+                            {"mode": target_mode.value,
+                             "effective": "next_turn"}
+                        ))
                 elif msgType == "cancel":
                     await self._cancelTurn(sessionId)
                     self.sessionDao.updateStatus(sessionId, "idle")
@@ -202,6 +242,40 @@ class AgentGatewayService(Singleton):
                     self.sessionDao.updateStatus(
                         sessionId, "error", lastError=str(event.data.get("message", ""))
                     )
+                elif event.type == EventType.PLAN_PROPOSED:
+                    self.sessionDao.updateStatus(sessionId, "waiting_plan")
+                elif event.type == EventType.PLAN_APPROVED:
+                    # 计划批准 → 模式已切换为 AGENT
+                    self.sessionDao.updateMode(sessionId, "agent")
+                    self.sessionDao.updateStatus(sessionId, "running")
+                    # 更新 DB 中 tool 消息的内容
+                    call_id = str(event.data.get("call_id", ""))
+                    tool_response = str(event.data.get("tool_response", ""))
+                    if call_id:
+                        self.sessionDao.updateToolResponse(
+                            sessionId, call_id, tool_response,
+                        )
+                    await self._send(websocket, sendLock, self._serverEvent(
+                        "mode_changed", sessionId, traceId,
+                        {"mode": "agent"}
+                    ))
+                elif event.type == EventType.PLAN_REJECTED:
+                    self.sessionDao.updateStatus(sessionId, "running")
+                    reason = str(event.data.get("reason", ""))
+                    call_id = str(event.data.get("call_id", ""))
+                    # 更新 DB 中 tool 消息的内容
+                    if call_id:
+                        new_content = f"[计划被拒绝] {reason}" if reason else "[计划被拒绝]"
+                        self.sessionDao.updateToolResponse(
+                            sessionId, call_id, new_content,
+                        )
+                    # 超时拒绝 → 模式已回退到 AGENT
+                    if "超时" in reason:
+                        self.sessionDao.updateMode(sessionId, "agent")
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "mode_changed", sessionId, traceId,
+                            {"mode": "agent", "reason": reason}
+                        ))
                 elif event.type == EventType.TEXT_DONE:
                     # 纯文本回复完成时捕获 usage（有 tool_calls 时在 TOOL_CALLING 中已捕获）
                     if not usageThisRound:

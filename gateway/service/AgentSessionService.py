@@ -172,6 +172,50 @@ class AgentSessionService(Singleton):
         AgentGatewayService().invalidateRuntime(sessionId)
         return self.getSession(sessionId, userId)
 
+    def switchMode(self, sessionId: str, userId: int,
+                   mode: str) -> AgentSessionResponse:
+        """切换 Agent 运行模式，即时在运行时生效 + 持久化到 DB。"""
+        from datetime import datetime
+        from gateway.orm.AgentSessionOrm import AgentSessionOrm
+        from gateway.service.AgentGatewayService import AgentGatewayService
+        from agent.agent_router.router import AgentMode
+
+        self.getSession(sessionId, userId)  # 验证存在
+
+        # 验证 mode 合法
+        try:
+            target_mode = AgentMode(mode)
+        except ValueError:
+            raise InvalidParamException(
+                userMessage=f"不支持的 Agent 模式: {mode}，"
+                f"可选: read_only / plan / agent / break_glass"
+            )
+
+        # 持久化到 DB
+        session = self.dao.SessionLocal()
+        try:
+            rowCount = session.query(AgentSessionOrm).filter(
+                AgentSessionOrm.sessionId == sessionId,
+            ).update({
+                "mode": target_mode.value,
+                "updatedAt": datetime.now(),
+            })
+            session.commit()
+            if rowCount == 0:
+                raise InvalidParamException(userMessage=f"更新会话 {sessionId} 失败")
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+        # 即时生效：在运行时 session 上切换（不重建）
+        gateway = AgentGatewayService()
+        runtime = gateway._runtimeSessions.get(sessionId)
+        if runtime is not None:
+            runtime.switchMode(target_mode)
+        return self.getSession(sessionId, userId)
+
     # ── Token 计费 ──
 
     def getTokenUsage(self, sessionId: str, userId: int) -> list:

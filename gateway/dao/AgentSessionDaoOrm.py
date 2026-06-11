@@ -126,6 +126,22 @@ class AgentSessionDaoOrm(Singleton):
         finally:
             session.close()
 
+    def updateMode(self, sessionId: str, mode: str) -> int:
+        """更新会话的运行模式。"""
+        from datetime import datetime
+        session = self.SessionLocal()
+        try:
+            rowCount = session.query(AgentSessionOrm).filter(
+                AgentSessionOrm.sessionId == sessionId,
+            ).update({"mode": mode, "updatedAt": datetime.now()})
+            session.commit()
+            return rowCount
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def updateSessionTitle(self, sessionId: str, title: str) -> int:
         """更新会话标题。"""
         session = self.SessionLocal()
@@ -216,6 +232,31 @@ class AgentSessionDaoOrm(Singleton):
             mid = orm.messageId
             session.expunge(orm)
             return mid
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def updateToolResponse(self, sessionId: str, toolCallId: str,
+                            newContent: str) -> int:
+        """更新指定 tool_call_id 的 tool 消息内容。
+        
+        用于 plan 审批后更新 tool 响应文本。
+        """
+        from datetime import datetime
+        session = self.SessionLocal()
+        try:
+            rowCount = session.query(AgentMessageOrm).filter(
+                AgentMessageOrm.sessionId == sessionId,
+                AgentMessageOrm.role == "tool",
+                AgentMessageOrm.toolCallId == toolCallId,
+            ).update({
+                "content": newContent,
+                "metadataJson": None,
+            })
+            session.commit()
+            return rowCount
         except Exception:
             session.rollback()
             raise

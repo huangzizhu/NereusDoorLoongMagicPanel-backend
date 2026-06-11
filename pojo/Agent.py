@@ -114,7 +114,14 @@ class AgentToolSourceSwitch(BaseModel):
 
 
 class AgentModelSwitch(BaseModel):
-    profileId: int = Field(..., ge=1)
+    profileId: int
+
+
+class AgentModeSwitch(BaseModel):
+    """切换 Agent 运行模式请求。"""
+    model_config = ConfigDict(extra="forbid")
+    mode: str = Field(..., max_length=32,
+                      description="目标模式: read_only / plan / agent / break_glass")
 
 
 class AgentSessionResponse(BaseModel):

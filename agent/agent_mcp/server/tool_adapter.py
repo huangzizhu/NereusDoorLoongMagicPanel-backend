@@ -51,6 +51,30 @@ from ..tools.project import (
 from ..tools.workspace import getWorkspaceContext
 
 
+# ── 特殊工具：submitPlan（不是真正的 MCP 工具，由 AgentCore 拦截）──
+
+def submitPlan(
+    summary: str = "",
+    steps: list[dict] | None = None,
+    risks: list[str] | None = None,
+    files: list[str] | None = None,
+) -> str:
+    """提交你的执行计划等待审批。调用此工具即表示你已经完成了分析和规划。
+
+    请在所有分析工作完成后，调用此工具提交完整的执行计划。
+    不要在计划中包含未经过读操作确认的假设。
+
+    Args:
+        summary: 计划概述，一句话说明要做什么
+        steps: 执行步骤列表。每步包含 step_id(唯一标识), title(标题), action(操作描述),
+               tool(可选预期工具), target(可选目标文件), risk("low"/"medium"/"high")
+        risks: 整体风险说明列表
+        files: 涉及的所有文件路径列表
+    """
+    # 实际逻辑由 AgentCore 拦截处理，此处仅作为 schema 定义
+    return "[计划已提交，等待审批]"
+
+
 TOOL_RISK_LEVELS: dict[str, str] = {
     "getWorkspaceContext": "read_only",
     "listFiles": "read_only",
@@ -82,6 +106,7 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "summarizeWorkspace": "read_only",
     "explainToolError": "read_only",
     "getRecentCommandResults": "read_only",
+    "submitPlan": "read_only",
     "runCommand": "dangerous",
     "webFetch": "read_only",
     "webSearch": "read_only",
@@ -119,6 +144,7 @@ TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
     "summarizeWorkspace": {"agentCore": True},
     "explainToolError": {"agentCore": True},
     "getRecentCommandResults": {"agentCore": True},
+    "submitPlan": {"agentCore": True, "planSubmission": True},
     "runCommand": {
         "agentCore": True,
         "usesShell": False,
@@ -168,6 +194,7 @@ AGENT_TOOL_FUNCTIONS: tuple[Callable[..., Any], ...] = (
     summarizeWorkspace,
     explainToolError,
     getRecentCommandResults,
+    submitPlan,
     webFetch,
     webSearch,
     runCommand,

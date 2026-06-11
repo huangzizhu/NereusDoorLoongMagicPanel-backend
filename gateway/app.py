@@ -18,6 +18,7 @@ from gateway.controller.DatabaseController import DatabaseController
 from gateway.controller.NginxController import NginxController
 from gateway.controller.AgentController import AgentController
 from gateway.controller.ModelPricingController import ModelPricingController
+from gateway.orm.OrmEngine import OrmEngine
 
 from starlette.formparsers import MultiPartParser
 
@@ -49,6 +50,9 @@ class Application:
 
     def createApp(self) -> FastAPI:
         self._registerAllController()
+        # 所有 ORM 模型已加载完毕（通过 controller import 链），
+        # 初始化数据库表结构 + 迁移
+        OrmEngine().ensureDbInit()
         app = FastAPI(
             debug=True,
             title="驭门龙面板后端",

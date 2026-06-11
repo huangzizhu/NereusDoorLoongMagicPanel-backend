@@ -21,6 +21,8 @@ from agent.agent_core.prompt_builder import PromptBuilder
 from agent.llm_providers.base import LLMProvider
 from agent.context_mgmt.compressor import compressHistory
 from agent.trace_log.recorder import TraceRecorder
+from agent.agent_router.router import AgentMode
+from agent.agent_router.plan_schema import planFromSubmitArgs, formatPlanForPrompt
 
 _logger = logging.getLogger("ndlmpanel.agent_core")
 
@@ -32,6 +34,7 @@ class LoopState(str, Enum):
     IDLE = "idle"
     THINKING = "thinking"
     EXECUTING = "executing"
+    PLAN_REVIEW = "plan_review"
     DONE = "done"
 
 
@@ -49,6 +52,7 @@ class AgentCore:
         approvalTimeout: float = 300.0,
         maxTokens: int = 60000,
         maxToolCallsPerRound: int = 0,
+        mode: AgentMode = AgentMode.AGENT,
     ):
         self._llm = llmProvider
         self._registry = registry
@@ -59,9 +63,14 @@ class AgentCore:
         self._maxTokens = maxTokens
         self._maxToolCallsPerRound = maxToolCallsPerRound
         self._approvalTimeout = approvalTimeout
+        self._mode = mode
         self._pendingApprovals: dict[str, asyncio.Event] = {}
         self._approvalDecisions: dict[str, dict] = {}
         self._recorder: "TraceRecorder | None" = None
+        # 两阶段 Plan 审批基础设施
+        self._msgs: list[dict] = []
+        self._pendingPlanApproval: tuple[str, asyncio.Event] | None = None
+        self._planApprovalDecision: dict | None = None
 
     def setRecorder(self, recorder: "TraceRecorder") -> None:
         """注入 TraceRecorder，在循环中自动记录关键事件。"""
@@ -79,6 +88,20 @@ class AgentCore:
         """拒绝某个待审批动作。由外部（AgentSession）调用。"""
         return self._resolveApproval(actionId, approved=False, reason=reason)
 
+    def _switchMode(self, mode: AgentMode) -> None:
+        """切换运行模式，同步更新 LLM 可见的工具列表。
+
+        与 AgentSession.switchMode 不同，此方法直接操作核心层组件，
+        不需要经过 session 层。trace 日志由调用方负责记录。
+        """
+        self._mode = mode
+        from agent.agent_router.router import AgentRouter
+        visible_tools = AgentRouter.filterToolsByMode(
+            mode, self._registry.listTools(), self._registry.getRiskLevel,
+        )
+        if hasattr(self._llm, "setTools"):
+            self._llm.setTools(visible_tools)
+
     def _resolveApproval(self, actionId: str, approved: bool,
                          reason: str) -> bool:
         ev = self._pendingApprovals.get(actionId)
@@ -87,6 +110,37 @@ class AgentCore:
         self._approvalDecisions[actionId] = {
             "approved": approved, "reason": reason,
         }
+        ev.set()
+        return True
+
+    # ── 两阶段 Plan 审批 ──
+
+    def approvePlan(self) -> bool:
+        """批准当前待审批的计划。由外部（AgentSession）调用。
+
+        Returns:
+            True = 找到并放行；False = 无待审批计划
+        """
+        if self._pendingPlanApproval is None:
+            return False
+        plan_id, ev = self._pendingPlanApproval
+        self._planApprovalDecision = {"approved": True, "reason": ""}
+        ev.set()
+        return True
+
+    def rejectPlan(self, reason: str = "") -> bool:
+        """拒绝当前待审批的计划。由外部（AgentSession）调用。
+
+        Args:
+            reason: 拒绝原因/修改建议
+
+        Returns:
+            True = 找到并拒绝；False = 无待审批计划
+        """
+        if self._pendingPlanApproval is None:
+            return False
+        plan_id, ev = self._pendingPlanApproval
+        self._planApprovalDecision = {"approved": False, "reason": reason}
         ev.set()
         return True
 
@@ -129,7 +183,7 @@ class AgentCore:
         self._trace(traceId, sessionId, "input.received",
                     {"input": userMessage[:200]})
 
-        msgs = self._promptBuilder.build(
+        self._msgs = self._promptBuilder.build(
             userMessage, conversationHistory=conversationHistory,
         )
         state = LoopState.THINKING
@@ -141,11 +195,11 @@ class AgentCore:
 
             if state == LoopState.THINKING:
                 # 上下文压缩（token 预算保护）
-                msgs = compressHistory(msgs, maxTokens=self._maxTokens)
+                self._msgs = compressHistory(self._msgs, maxTokens=self._maxTokens)
 
                 stream.emit(EventType.THINKING_START, {"round": roundCount})
                 self._trace(traceId, sessionId, "llm.request",
-                            {"round": roundCount, "msgs_count": len(msgs)})
+                            {"round": roundCount, "msgs_count": len(self._msgs)})
 
                 # ── 真流式：逐 token 推送 TEXT_DELTA ──
                 contentParts: list[str] = []
@@ -153,7 +207,7 @@ class AgentCore:
                 finishReason = ""
                 usage: dict = {}
 
-                async for chunk in self._llm.chatStream(msgs):
+                async for chunk in self._llm.chatStream(self._msgs):
                     if chunk.content:
                         contentParts.append(chunk.content)
                         # 立即推送文本 delta（真正的流式输出）
@@ -183,6 +237,9 @@ class AgentCore:
                 })
 
                 if response.content and not response.tool_calls:
+                    # LLM 回复了纯文本（无 tool_calls）→ 本轮结束
+                    # 在 ReAct 模式中，LLM 会在同一轮输出分析文本 + 调工具，
+                    # 不会在纯文本之后的下轮再调工具。
                     stream.emit(EventType.TEXT_DONE, {
                         "usage": response.usage,
                     })
@@ -207,7 +264,7 @@ class AgentCore:
                         "tool_calls": toolCallsBlock,
                         "usage": response.usage,
                     })
-                    msgs.append({
+                    self._msgs.append({
                         "role": "assistant",
                         "content": None,
                         "tool_calls": toolCallsBlock,
@@ -222,10 +279,58 @@ class AgentCore:
 
             elif state == LoopState.EXECUTING:
                 totalToolOutputChars = 0
+                hasPendingPlan = False
                 for index, tc in enumerate(response.tool_calls if response else []):
                     name = tc.get("name", "")
                     args = tc.get("arguments", {})
                     callId = tc.get("id", "") or gen_tool_call_id()
+
+                    # ── 拦截 submitPlan（两阶段 Plan 模式）──
+                    if name == "submitPlan":
+                        try:
+                            plan = planFromSubmitArgs(args)
+                        except ValueError as exc:
+                            toolOutput = f"[计划格式错误] {exc}"
+                            self._trace(traceId, sessionId, "plan.invalid", {
+                                "error": str(exc),
+                            })
+                            stream.emit(EventType.TOOL_RESULT, {
+                                "call_id": callId, "tool_name": name,
+                                "success": False, "output": toolOutput,
+                            })
+                            self._msgs.append({
+                                "role": "tool",
+                                "tool_call_id": callId,
+                                "content": toolOutput,
+                            })
+                            continue
+
+                        # 发出 PLAN_PROPOSED 事件
+                        from agent.agent_router.plan_schema import planToDict
+                        self._trace(traceId, sessionId, "plan.proposed", {
+                            "summary": plan.summary,
+                            "step_count": len(plan.steps),
+                        })
+                        stream.emit(EventType.PLAN_PROPOSED, {
+                            "plan": planToDict(plan),
+                        })
+                        # 向对话历史添加 tool response，保持 assistant(tool_calls)→tool 配对
+                        # 避免后续 LLM 调用因 tool_calls 无响应而报 400
+                        toolOutput = "[计划已提交，等待审批]"
+                        stream.emit(EventType.TOOL_RESULT, {
+                            "call_id": callId, "tool_name": name,
+                            "success": True, "output": toolOutput,
+                        })
+                        self._msgs.append({
+                            "role": "tool",
+                            "tool_call_id": callId,
+                            "content": toolOutput,
+                        })
+
+                        # 进入 PLAN_REVIEW 等待审批
+                        hasPendingPlan = True
+                        self._pendingPlanProps = (plan, callId)
+                        break
 
                     if self._maxToolCallsPerRound > 0 and index >= self._maxToolCallsPerRound:
                         toolOutput = (
@@ -240,7 +345,7 @@ class AgentCore:
                             "call_id": callId, "tool_name": name,
                             "success": False, "output": toolOutput,
                         })
-                        msgs.append({
+                        self._msgs.append({
                             "role": "tool",
                             "tool_call_id": callId,
                             "content": toolOutput,
@@ -249,7 +354,7 @@ class AgentCore:
 
                     risk = self._registry.getRiskLevel(name)
                     verdict, reason = self._safety.checkToolCallWithReason(
-                        name, risk, args)
+                        name, risk, args, self._mode)
 
                     self._trace(traceId, sessionId, "safety.check", {
                         "tool": name, "risk": risk.value,
@@ -262,8 +367,33 @@ class AgentCore:
 
                     if verdict.value == "block":
                         toolOutput = "[阻塞] " + reason
+                        # 先发 TOOL_RESULT 再发 ERROR
+                        # ERROR 会导致 EventStream.__aiter__ 提前 break
+                        # 不先发 TOOL_RESULT 会使数据库缺失 tool response
+                        stream.emit(EventType.TOOL_RESULT, {
+                            "call_id": callId, "tool_name": name,
+                            "success": False, "output": toolOutput,
+                        })
                         stream.emit(EventType.ERROR,
                                     {"message": toolOutput})
+                        # 跳过公共的 TOOL_RESULT emit（下面的代码还会再发一次）
+                        # 直接跳到 tool response 加入对话历史
+                        self._trace(traceId, sessionId, "tool.result", {
+                            "tool": name, "call_id": callId,
+                            "output_len": len(toolOutput),
+                        })
+                        modelToolOutput = self._fitToolOutputForModel(
+                            toolOutput,
+                            MAX_TOOL_OUTPUT_CHARS_FOR_MODEL,
+                            MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
+                        )
+                        totalToolOutputChars += len(modelToolOutput)
+                        self._msgs.append({
+                            "role": "tool",
+                            "tool_call_id": callId,
+                            "content": modelToolOutput,
+                        })
+                        continue
                     elif verdict.value == "require_confirm":
                         self._trace(traceId, sessionId, "approval.requested", {
                             "tool": name, "args": {k: str(v)[:100] for k, v in args.items()},
@@ -288,12 +418,23 @@ class AgentCore:
                         MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
                     )
                     totalToolOutputChars += len(modelToolOutput)
-                    msgs.append({
+                    self._msgs.append({
                         "role": "tool",
                         "tool_call_id": callId,
                         "content": modelToolOutput,
                     })
 
+                if hasPendingPlan:
+                    state = LoopState.PLAN_REVIEW
+                else:
+                    state = LoopState.THINKING
+
+            elif state == LoopState.PLAN_REVIEW:
+                # 等待计划审批
+                plan, callId = self._pendingPlanProps
+                await self._waitForPlanApproval(stream, plan, callId)
+                # 审批完成后无论批准/拒绝都回到 THINKING
+                # （_waitForPlanApproval 内部已切换 mode 或注入反馈）
                 state = LoopState.THINKING
 
         if self._maxRounds > 0 and roundCount >= self._maxRounds:
@@ -348,6 +489,111 @@ class AgentCore:
             return await self._executeTool(name, args)
         rejectReason = decision.get("reason", "") or "用户拒绝执行"
         return f"[用户拒绝] 工具 {name} 未执行。原因: {rejectReason}"
+
+    def _updateToolResponse(self, callId: str, newContent: str) -> None:
+        """更新对话历史中指定 tool_call_id 的 tool 响应内容。
+        
+        用于 plan 审批后更新 "[计划已提交，等待审批]" 为实际结果。
+        """
+        for msg in self._msgs:
+            if (msg.get("role") == "tool"
+                    and msg.get("tool_call_id") == callId):
+                msg["content"] = newContent
+                break
+
+    async def _waitForPlanApproval(self, stream: EventStream,
+                                    plan, callId: str) -> None:
+        """等待计划审批结果。
+
+        发出 PLAN_PROPOSED 后挂起，等待外部 approvePlan()/rejectPlan()。
+        批准后切换到 AGENT 模式并注入计划；
+        拒绝后更新 tool 响应并注入反馈让 LLM 重新出计划。
+        """
+        planId = gen_tool_call_id()
+        ev = asyncio.Event()
+        self._pendingPlanApproval = (planId, ev)
+        traceId = stream.traceId
+        sessionId = stream._sessionId
+
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=self._approvalTimeout)
+        except asyncio.TimeoutError:
+            self._pendingPlanApproval = None
+            self._planApprovalDecision = None
+            self._pendingPlanProps = None
+            stream.emit(EventType.PLAN_REJECTED, {
+                "reason": "审批超时",
+                "call_id": callId,
+            })
+            self._trace(traceId, sessionId, "plan.rejected", {
+                "reason": "审批超时",
+            })
+            # 更新 tool 响应
+            self._updateToolResponse(callId, "[计划审批超时，已跳过]")
+            # 超时后回退到 AGENT 模式，不阻断用户
+            self._switchMode(AgentMode.AGENT)
+            self._trace(traceId, sessionId, "mode.switch", {
+                "from": AgentMode.PLAN.value,
+                "to": AgentMode.AGENT.value,
+                "reason": "plan_timeout",
+            })
+            self._msgs.append({
+                "role": "system",
+                "content": "计划审批超时，已切换到标准模式。请直接告诉用户你需要做什么。",
+            })
+            return
+
+        decision = self._planApprovalDecision
+        self._pendingPlanApproval = None
+        self._planApprovalDecision = None
+        self._pendingPlanProps = None
+
+        if decision["approved"]:
+            # 批准：切换到 AGENT 模式，重新过滤工具列表
+            self._switchMode(AgentMode.AGENT)
+            self._trace(traceId, sessionId, "mode.switch", {
+                "from": AgentMode.PLAN.value,
+                "to": AgentMode.AGENT.value,
+                "reason": "plan_approved",
+            })
+            self._trace(traceId, sessionId, "plan.approved", {
+                "summary": plan.summary,
+                "step_count": len(plan.steps),
+            })
+            # 更新 tool 响应
+            self._updateToolResponse(callId, "[计划已批准，开始执行]")
+            plan_text = formatPlanForPrompt(plan)
+            # 注入已批准的计划作为上下文
+            self._msgs.append({
+                "role": "system",
+                "content": f"## 已批准的执行计划\n\n{plan_text}",
+            })
+            # 自动注入用户消息触发 LLM 开始执行
+            self._msgs.append({
+                "role": "user",
+                "content": "开始实施",
+            })
+            from agent.agent_router.plan_schema import planToDict
+            stream.emit(EventType.PLAN_APPROVED, {
+                "plan": planToDict(plan),
+                "call_id": callId,
+                "tool_response": "[计划已批准，开始执行]",
+            })
+        else:
+            # 拒绝：更新 tool 响应 + 注入反馈
+            feedback = decision.get("reason", "") or "请调整计划"
+            self._trace(traceId, sessionId, "plan.rejected", {
+                "reason": feedback,
+            })
+            self._updateToolResponse(callId, f"[计划被拒绝] {feedback}")
+            self._msgs.append({
+                "role": "user",
+                "content": f"计划需要修改：{feedback}\n\n请根据反馈重新生成计划。",
+            })
+            stream.emit(EventType.PLAN_REJECTED, {
+                "reason": feedback,
+                "call_id": callId,
+            })
 
     def _trace(self, traceId: str, sessionId: str,
                eventType: str, data: dict) -> None:

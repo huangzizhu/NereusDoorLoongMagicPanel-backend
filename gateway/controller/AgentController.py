@@ -18,6 +18,7 @@ from pojo.Agent import (
     AgentLlmProfileCreate,
     AgentLlmProfileUpdate,
     AgentModelSwitch,
+    AgentModeSwitch,
     AgentSessionCreate,
     AgentToolSourceSwitch,
 )
@@ -119,6 +120,14 @@ class AgentController(AbstractController):
             userId = self._getRequestUserId(request)
             return Response.success(
                 self.sessionService.switchModel(sessionId, userId, body.profileId)
+            )
+
+        @self.router.put("/sessions/{sessionId}/mode")
+        def switchAgentMode(request: Request, sessionId: str,
+                             body: AgentModeSwitch):
+            userId = self._getRequestUserId(request)
+            return Response.success(
+                self.sessionService.switchMode(sessionId, userId, body.mode)
             )
 
         @self.router.post("/llm/profiles")

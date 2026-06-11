@@ -21,7 +21,7 @@ from agent.agent_core.prompt_builder import PromptBuilder
 from agent.agent_core.agent_loop import AgentCore
 from agent.trace_log.recorder import TraceRecorder
 from agent.llm_providers.factory import createProvider
-from agent.agent_router.router import AgentMode, getModePrompt
+from agent.agent_router.router import AgentMode, AgentRouter, getModePrompt
 from agent.agent_mcp.server.tool_adapter import buildAgentTools
 from agent.integration.mcp_stdio import MultiServerSpec, MultiStdioMcpBridge, StdioMcpBridge
 
@@ -81,6 +81,7 @@ class AgentSession:
             includeCoreTools,
             mcpServers,
         )
+        self._registry = registry
 
         # 核心组件
         safety = RuleEngine(config.safety_policy)
@@ -89,9 +90,13 @@ class AgentSession:
         # LLM Provider — 由工厂按 config.llm_provider 选择，
         # 无 api_key 时自动回退 MockProvider
         self._llm = createProvider(config)
-        # Anthropic 格式需要把工具列表作为 tools 参数发送
+        # 根据模式过滤 LLM 可见的工具列表
+        # （READ_ONLY/PLAN 模式只暴露只读工具，从源头让 LLM 看不见写入/高危工具）
+        visible_tools = AgentRouter.filterToolsByMode(
+            mode, registry.listTools(), registry.getRiskLevel,
+        )
         if hasattr(self._llm, "setTools"):
-            self._llm.setTools(registry.listTools())
+            self._llm.setTools(visible_tools)
 
         self._recorder = TraceRecorder(config.trace_db_path)
         self._core = AgentCore(
@@ -101,6 +106,7 @@ class AgentSession:
             maxRounds=config.max_tool_rounds,
             maxTokens=config.llm_max_tokens,
             maxToolCallsPerRound=config.max_tool_calls_per_round,
+            mode=self._mode,
         )
         self._core.setRecorder(self._recorder)
         self._runTask: "asyncio.Task | None" = None
@@ -140,14 +146,22 @@ class AgentSession:
                 "toolSource must be one of: current_mcp, mcp, stdio, mcp_stdio"
             )
 
+        # 始终注册 submitPlan（两阶段 Plan 模式必需，不依赖 includeCoreTools）
+        existing = {
+            tool["function"]["name"]
+            for tool in registry.listTools()
+        }
+        if "submitPlan" not in existing:
+            from agent.agent_mcp.server.tool_adapter import submitPlan as _submitPlan
+            registry.register(_submitPlan, "read_only")
+            existing.add("submitPlan")
+
         if includeCoreTools:
-            existing = {
-                tool["function"]["name"]
-                for tool in registry.listTools()
-            }
             for tool in buildAgentTools():
                 func = tool.func
                 name = tool.name
+                if name == "submitPlan":
+                    continue  # 已在上方注册
                 if name in existing:
                     name = f"core_{name}"
                     func = _aliasedTool(tool.func, name)
@@ -208,6 +222,35 @@ class AgentSession:
                                   {"action_id": actionId, "approved": False,
                                    "reason": reason})
         return ok
+
+    def approvePlan(self) -> bool:
+        """批准当前待审批的计划（两阶段 Plan 模式）。"""
+        return self._core.approvePlan()
+
+    def rejectPlan(self, reason: str = "") -> bool:
+        """拒绝当前待审批的计划。"""
+        return self._core.rejectPlan(reason)
+
+    def switchMode(self, mode: AgentMode) -> None:
+        """切换 Agent 运行模式，即时生效。
+
+        更新影响：
+        1. self._mode / self._core._mode — 影响 RuleEngine 执行层门控
+        2. LLM 可见的工具列表 — 重新过滤并推送（影响 LLM 下一轮调用）
+        3. AgentCore 的 _mode — 影响 EXECUTING 分支行为
+
+        Args:
+            mode: 目标模式（read_only / plan / agent / break_glass / executing）
+        """
+        self._mode = mode
+        self._core._mode = mode
+
+        # 重新过滤工具列表，让 LLM 立即可见
+        visible_tools = AgentRouter.filterToolsByMode(
+            mode, self._registry.listTools(), self._registry.getRiskLevel,
+        )
+        if hasattr(self._llm, "setTools"):
+            self._llm.setTools(visible_tools)
 
     def getTrace(self) -> list[dict]:
         """获取当前会话的全部审计记录。"""

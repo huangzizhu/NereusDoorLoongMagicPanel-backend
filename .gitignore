@@ -22,3 +22,7 @@ env/
 # SQLite 数据库文件
 panel.db
 *.db
+.codex
+.reasonix
+.agents
+

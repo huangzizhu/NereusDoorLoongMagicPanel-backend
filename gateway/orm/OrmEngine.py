@@ -17,12 +17,13 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
-# 需要重建（DROP + CREATE）的表 — 当表结构发生破坏性变更时
-# 删表前会检查旧 schema 摘要（通过 column count），匹配时才重建
+# 自动删表重建 — ⚠️ 危险！仅在你确认旧 schema 数据可以丢弃时启用
+# 匹配逻辑：列数 == oldColCount 时 DROP TABLE，由 SQLAlchemy create_all 重建
+# 生产环境请保持为空（或至少移除你不想丢失的表）
 _DROP_AND_RECREATE: dict[str, int] = {
-    "agent_messages": 6,   # 旧列数
-    "agent_token_usage": 11,  # 去掉 cost 列，旧表 11 列（原始结构含 inputCost/outputCost/totalCost）
-    "agent_model_pricing": 0, # 全新表，0 表示不存在就建
+    # "agent_messages": 6,         # 已禁用：会丢失消息历史
+    # "agent_token_usage": 11,     # 已禁用：会丢失计费记录
+    "agent_model_pricing": 0,      # 0 = 不存在就建，安全
 }
 
 
@@ -64,10 +65,22 @@ class OrmEngine(Singleton):
         self.DATABASE_URL = f"sqlite:///{self.dbFile.resolve().as_posix()}"
         self.engine = create_engine(self.DATABASE_URL, echo=True)
         self.Base = declarative_base()
-        self.Base.metadata.create_all(self.engine)
-        _runMigrations(self.engine)
+        self._db_initialized = False
+
+    def ensureDbInit(self) -> None:
+        """延迟初始化：在所有 ORM 模型加载完成后，创建表并运行迁移。
+
+        必须在所有 ORM 模型（继承 self.Base 的类）被 Python 加载后调用，
+        否则 self.Base.metadata 为空，表不会被创建。
+        最佳调用时机：应用启动时，所有 controller import 完成之后。
+        """
+        if not self._db_initialized:
+            self.Base.metadata.create_all(self.engine)
+            _runMigrations(self.engine)
+            self._db_initialized = True
 
     def createSessionFactory(self):
+        self.ensureDbInit()
         return sessionmaker(bind=self.engine)
 
     def getBase(self):

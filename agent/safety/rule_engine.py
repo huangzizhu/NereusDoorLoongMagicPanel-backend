@@ -2,7 +2,7 @@
 安全规则引擎。
 
 从原 safety_guard.py 迁移，去掉 pydantic 依赖。
-三层检查：READ_ONLY 放行 → 高危参数模式 → DANGEROUS 需确认。
+四层检查：模式门控 → 高危参数模式 → 策略规则 → 风险等级放行/审批。
 """
 from __future__ import annotations
 import re
@@ -10,6 +10,7 @@ from typing import Any
 
 from agent.safety.policy import SafetyPolicy, loadPolicy
 from agent.shared.types import ToolRiskLevel, SafetyVerdict
+from agent.agent_router.router import AgentMode, AgentRouter
 
 _DANGEROUS_PATTERNS: list[tuple[re.Pattern, str]] = [
     # ── 路径类 ──
@@ -67,20 +68,45 @@ class RuleEngine:
         ]
 
     def checkToolCall(self, toolName: str, riskLevel: ToolRiskLevel,
-                      arguments: dict) -> SafetyVerdict:
+                      arguments: dict,
+                      mode: AgentMode = AgentMode.AGENT) -> SafetyVerdict:
         """校验工具调用安全性。
 
         Args:
             toolName: 工具名
             riskLevel: 工具风险等级
             arguments: 工具参数字典
+            mode: 当前 Agent 运行模式（默认 AGENT，向后兼容）
         """
-        verdict, _ = self.checkToolCallWithReason(toolName, riskLevel, arguments)
+        verdict, _ = self.checkToolCallWithReason(toolName, riskLevel, arguments, mode)
         return verdict
 
     def checkToolCallWithReason(self, toolName: str, riskLevel: ToolRiskLevel,
-                                arguments: dict) -> tuple[SafetyVerdict, str]:
-        """与 checkToolCall 相同，但额外返回原因字符串。"""
+                                arguments: dict,
+                                mode: AgentMode = AgentMode.AGENT) -> tuple[SafetyVerdict, str]:
+        """与 checkToolCall 相同，但额外返回原因字符串。
+
+        检查顺序（优先级从高到低）：
+          1. 模式门控 — 当前模式是否允许该风险等级的工具
+          2. BREAK_GLASS — 紧急模式跳过所有审批
+          3. 保护路径检查 — 是否命中 policy.protected_paths
+          4. 高危参数模式 — 是否命中 _DANGEROUS_PATTERNS
+          5. 安全策略 — 是否命中 policy 中的 block/approval 规则
+          6. 风险等级放行 — READ_ONLY 自动放行 / DANGEROUS 需审批
+        """
+        # ── 1. 模式门控：检查当前模式是否允许该风险等级的工具 ──
+        allowed_levels = AgentRouter.getAllowedRiskLevels(mode)
+        if riskLevel not in allowed_levels:
+            return (
+                SafetyVerdict.BLOCK,
+                f"当前模式 [{mode.value}] 不允许 {riskLevel.value} 操作"
+            )
+
+        # ── 2. BREAK_GLASS：紧急模式跳过所有审批，直接放行 ──
+        if mode == AgentMode.BREAK_GLASS:
+            return SafetyVerdict.ALLOW, "紧急模式，操作已放行"
+
+        # ── 3~6: 现有安全规则（不变） ──
         values = list(self._flattenValues(arguments))
 
         for value in values:
