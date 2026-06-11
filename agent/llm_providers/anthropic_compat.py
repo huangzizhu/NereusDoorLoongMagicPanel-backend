@@ -118,10 +118,12 @@ class AnthropicProvider(LLMProvider):
         result = []
         for t in tools:
             fn = t.get("function", t)
+            name = fn.get("name", "")
+            input_schema = fn.get("parameters", {"type": "object", "properties": {}, "required": []})
             result.append({
-                "name": fn.get("name", ""),
+                "name": name,
                 "description": fn.get("description", ""),
-                "input_schema": fn.get("parameters", {"type": "object", "properties": {}, "required": []}),
+                "input_schema": input_schema,
             })
         return result
 

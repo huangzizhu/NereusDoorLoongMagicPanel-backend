@@ -127,6 +127,18 @@ class AgentGatewayService(Singleton):
                         await self._send(websocket, sendLock, self._serverEvent(
                             "error", sessionId, None, {"message": "无待审批的计划或计划已处理"}
                         ))
+                elif msgType == "choice":
+                    actionId = str(payload.get("actionId") or "")
+                    selectionId = str(payload.get("selectionId") or "")
+                    customInput = str(payload.get("customInput") or "")
+                    runtime = self._runtimeSessions.get(sessionId)
+                    ok = False
+                    if runtime is not None:
+                        ok = runtime.resolveChoice(actionId, selectionId, customInput)
+                    if not ok:
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "error", sessionId, None, {"message": "无待回复的选择题或已处理"}
+                        ))
                 elif msgType == "switch_mode":
                     mode_str = str(payload.get("mode") or "")
                     try:
@@ -242,6 +254,10 @@ class AgentGatewayService(Singleton):
                     self.sessionDao.updateStatus(
                         sessionId, "error", lastError=str(event.data.get("message", ""))
                     )
+                elif event.type == EventType.CHOICE_REQUIRED:
+                    self.sessionDao.updateStatus(sessionId, "waiting_choice")
+                elif event.type == EventType.CHOICE_RESOLVED:
+                    self.sessionDao.updateStatus(sessionId, "running")
                 elif event.type == EventType.PLAN_PROPOSED:
                     self.sessionDao.updateStatus(sessionId, "waiting_plan")
                 elif event.type == EventType.PLAN_APPROVED:

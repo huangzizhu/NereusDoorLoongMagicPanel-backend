@@ -72,7 +72,23 @@ class ToolRegistry:
 
     def listTools(self) -> list[dict]:
         """Return OpenAI-style tool schemas used by the agent prompt/LLM layer."""
-        schemas = [functionToToolSchema(_toolFunc(tool)) for tool in self._tools.values()]
+        schemas = []
+        for name, tool in self._tools.items():
+            schema = functionToToolSchema(_toolFunc(tool))
+            risk = self._riskLevels.get(name, ToolRiskLevel.WRITE)
+            # 给需要审批的工具（write/dangerous）注入 reason 参数
+            # LLM 必须说明调用目的，用于审批弹窗展示
+            if risk != ToolRiskLevel.READ_ONLY:
+                params = schema.setdefault("function", {}).setdefault("parameters", {})
+                props = params.setdefault("properties", {})
+                props["reason"] = {
+                    "type": "string",
+                    "description": "调用此工具的原因和目的，向用户解释你的意图。必须说明你要做什么、为什么这样做。",
+                }
+                required = params.setdefault("required", [])
+                if "reason" not in required:
+                    required.append("reason")
+            schemas.append(schema)
         schemas.sort(key=lambda item: item["function"]["name"])
         return schemas
 

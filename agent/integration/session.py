@@ -146,7 +146,7 @@ class AgentSession:
                 "toolSource must be one of: current_mcp, mcp, stdio, mcp_stdio"
             )
 
-        # 始终注册 submitPlan（两阶段 Plan 模式必需，不依赖 includeCoreTools）
+        # 始终注册 submitPlan + ask_choice（两阶段 Plan 模式必需，不依赖 includeCoreTools）
         existing = {
             tool["function"]["name"]
             for tool in registry.listTools()
@@ -155,6 +155,10 @@ class AgentSession:
             from agent.agent_mcp.server.tool_adapter import submitPlan as _submitPlan
             registry.register(_submitPlan, "read_only")
             existing.add("submitPlan")
+        if "ask_choice" not in existing:
+            from agent.agent_mcp.server.tool_adapter import ask_choice as _ask_choice
+            registry.register(_ask_choice, "read_only")
+            existing.add("ask_choice")
 
         if includeCoreTools:
             for tool in buildAgentTools():
@@ -230,6 +234,11 @@ class AgentSession:
     def rejectPlan(self, reason: str = "") -> bool:
         """拒绝当前待审批的计划。"""
         return self._core.rejectPlan(reason)
+
+    def resolveChoice(self, actionId: str,
+                      selectionId: str, customInput: str = "") -> bool:
+        """响应当前待回复的选择题。"""
+        return self._core.resolveChoice(selectionId, customInput)
 
     def switchMode(self, mode: AgentMode) -> None:
         """切换 Agent 运行模式，即时生效。

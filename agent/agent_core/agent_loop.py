@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from enum import Enum
-from agent.shared.types import EventType, LLMResponse
+from agent.shared.types import EventType, LLMResponse, ToolRiskLevel
 from agent.shared.id_gen import gen_tool_call_id
 from agent.integration.event_stream import EventStream
 from agent.safety.injection_detector import checkPromptInjection
@@ -28,6 +28,50 @@ _logger = logging.getLogger("ndlmpanel.agent_core")
 
 MAX_TOOL_OUTPUT_CHARS_FOR_MODEL = 1200
 MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND = 6000
+
+_LABEL_IDS = ["A", "B", "C", "D", "E", "F"]
+
+
+def _normalize_choice_options(raw_options: list) -> list[dict]:
+    """归一化 ask_choice 的 options 参数。
+
+    LLM 可能输出不同格式，统一转为 [{"id": "A", "title": "...", "summary": ""}, ...]。
+
+    支持的输入格式：
+    - 字符串列表 ["Python", "Go"] → 自动赋予 A/B 编号
+    - 对象列表 [{"id":"A","title":"Python"}] → 透传，补 summary
+    - 混合格式 → 尽力归一化
+    """
+    if not raw_options:
+        return []
+
+    normalized: list[dict] = []
+    for i, opt in enumerate(raw_options):
+        if isinstance(opt, str):
+            # 扁平字符串 → 自动编号
+            label = _LABEL_IDS[i] if i < len(_LABEL_IDS) else str(i + 1)
+            normalized.append({
+                "id": label,
+                "title": opt,
+                "summary": "",
+            })
+        elif isinstance(opt, dict):
+            # 对象格式 → 补默认值
+            label = str(opt.get("id", _LABEL_IDS[i] if i < len(_LABEL_IDS) else str(i + 1)))
+            normalized.append({
+                "id": label,
+                "title": str(opt.get("title", opt.get("id", f"选项{i+1}"))),
+                "summary": str(opt.get("summary", "")),
+            })
+        else:
+            # 兜底
+            label = _LABEL_IDS[i] if i < len(_LABEL_IDS) else str(i + 1)
+            normalized.append({
+                "id": label,
+                "title": str(opt),
+                "summary": "",
+            })
+    return normalized
 
 
 class LoopState(str, Enum):
@@ -71,6 +115,9 @@ class AgentCore:
         self._msgs: list[dict] = []
         self._pendingPlanApproval: tuple[str, asyncio.Event] | None = None
         self._planApprovalDecision: dict | None = None
+        # 选择题（ask_choice）基础设施
+        self._pendingChoice: tuple[str, asyncio.Event] | None = None
+        self._choiceDecision: dict | None = None
 
     def setRecorder(self, recorder: "TraceRecorder") -> None:
         """注入 TraceRecorder，在循环中自动记录关键事件。"""
@@ -141,6 +188,28 @@ class AgentCore:
             return False
         plan_id, ev = self._pendingPlanApproval
         self._planApprovalDecision = {"approved": False, "reason": reason}
+        ev.set()
+        return True
+
+    # ── 选择题（ask_choice）──
+
+    def resolveChoice(self, selectionId: str, customInput: str = "") -> bool:
+        """响应当前待回复的选择题。由外部（AgentSession）调用。
+
+        Args:
+            selectionId: 用户选择的选项 id（如 "A"），或 "__custom__"
+            customInput: 当 selectionId 为 "__custom__" 时的自定义输入
+
+        Returns:
+            True = 找到并放行；False = 无待回复的选择题
+        """
+        if self._pendingChoice is None:
+            return False
+        choiceId, ev = self._pendingChoice
+        self._choiceDecision = {
+            "selection_id": selectionId,
+            "custom_input": customInput,
+        }
         ev.set()
         return True
 
@@ -260,13 +329,15 @@ class AgentCore:
                             }
                         })
                     # 发出 TOOL_CALLING 事件，让消费者可以持久化
+                    # 拼装 LLM 输出文本（用于 tool 调用时填充 ai_reason 兜底）
+                    preamble = "".join(contentParts).strip() if contentParts else ""
                     stream.emit(EventType.TOOL_CALLING, {
                         "tool_calls": toolCallsBlock,
                         "usage": response.usage,
                     })
                     self._msgs.append({
                         "role": "assistant",
-                        "content": None,
+                        "content": preamble or None,
                         "tool_calls": toolCallsBlock,
                     })
                     state = LoopState.EXECUTING
@@ -284,6 +355,40 @@ class AgentCore:
                     name = tc.get("name", "")
                     args = tc.get("arguments", {})
                     callId = tc.get("id", "") or gen_tool_call_id()
+
+                    # ── 拦截 ask_choice（选择题交互）──
+                    if name == "ask_choice":
+                        question = str(args.get("question", ""))
+                        raw_options = args.get("options", [])
+                        allow_custom = True  # 强制允许自定义，让用户总有自由输入权
+
+                        # 归一化：扁平字符串数组 → 对象数组
+                        # LLM 有时输出 ["A", "B"] 而非 [{"id":"A","title":"A"}]
+                        options = _normalize_choice_options(raw_options)
+
+                        choiceResult = await self._waitForChoice(
+                            stream, question, options, allow_custom,
+                        )
+                        # 构造 tool result 返回给 LLM
+                        toolOutput = json.dumps(
+                            choiceResult, ensure_ascii=False,
+                        )
+                        stream.emit(EventType.TOOL_RESULT, {
+                            "call_id": callId, "tool_name": name,
+                            "success": True, "output": toolOutput,
+                        })
+                        modelToolOutput = self._fitToolOutputForModel(
+                            toolOutput,
+                            MAX_TOOL_OUTPUT_CHARS_FOR_MODEL,
+                            MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
+                        )
+                        totalToolOutputChars += len(modelToolOutput)
+                        self._msgs.append({
+                            "role": "tool",
+                            "tool_call_id": callId,
+                            "content": modelToolOutput,
+                        })
+                        continue
 
                     # ── 拦截 submitPlan（两阶段 Plan 模式）──
                     if name == "submitPlan":
@@ -353,16 +458,44 @@ class AgentCore:
                         continue
 
                     risk = self._registry.getRiskLevel(name)
+                    # 提取并剥离 AI 调用理由（仅 write/dangerous 工具有此参数）
+                    ai_reason = args.pop("reason", "") if risk != ToolRiskLevel.READ_ONLY else ""
+
+                    # ── 打回：write/dangerous 工具必须带 reason ──
+                    if risk != ToolRiskLevel.READ_ONLY and not ai_reason:
+                        toolOutput = (
+                            f"[缺少 reason 参数] 调用 {name} 时必须填写 reason 参数说明调用原因和目的，"
+                            f"请补充 reason 后重新调用。"
+                        )
+                        stream.emit(EventType.TOOL_RESULT, {
+                            "call_id": callId, "tool_name": name,
+                            "success": False, "output": toolOutput,
+                        })
+                        modelToolOutput = self._fitToolOutputForModel(
+                            toolOutput,
+                            MAX_TOOL_OUTPUT_CHARS_FOR_MODEL,
+                            MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
+                        )
+                        totalToolOutputChars += len(modelToolOutput)
+                        self._msgs.append({
+                            "role": "tool",
+                            "tool_call_id": callId,
+                            "content": modelToolOutput,
+                        })
+                        continue
+
                     verdict, reason = self._safety.checkToolCallWithReason(
                         name, risk, args, self._mode)
 
                     self._trace(traceId, sessionId, "safety.check", {
                         "tool": name, "risk": risk.value,
                         "verdict": verdict.value, "reason": reason,
+                        "ai_reason": ai_reason,
                     })
                     stream.emit(EventType.SAFETY_CHECKED, {
                         "tool": name, "risk": risk.value,
                         "verdict": verdict.value, "reason": reason,
+                        "ai_reason": ai_reason,
                     })
 
                     if verdict.value == "block":
@@ -397,9 +530,10 @@ class AgentCore:
                     elif verdict.value == "require_confirm":
                         self._trace(traceId, sessionId, "approval.requested", {
                             "tool": name, "args": {k: str(v)[:100] for k, v in args.items()},
+                            "ai_reason": ai_reason,
                         })
                         toolOutput = await self._handleApproval(
-                            stream, name, args, reason)
+                            stream, name, args, reason, ai_reason=ai_reason)
                     else:
                         toolOutput = await self._executeTool(name, args)
 
@@ -450,7 +584,8 @@ class AgentCore:
         return roundCount < self._maxRounds
 
     async def _handleApproval(self, stream: EventStream, name: str,
-                              args: dict, reason: str) -> str:
+                              args: dict, reason: str,
+                              ai_reason: str = "") -> str:
         """高危操作人工审批闭环。
 
         发出 APPROVAL_REQUIRED 事件后，挂起等待外部 approve()/reject()，
@@ -463,6 +598,7 @@ class AgentCore:
         stream.emit(EventType.APPROVAL_REQUIRED, {
             "tool_name": name, "arguments": args,
             "action_id": actionId, "reason": reason,
+            "ai_reason": ai_reason,
         })
 
         try:
@@ -594,6 +730,64 @@ class AgentCore:
                 "reason": feedback,
                 "call_id": callId,
             })
+
+    async def _waitForChoice(
+        self, stream: EventStream,
+        question: str, options: list, allow_custom: bool,
+    ) -> dict:
+        """等待用户回答选择题（ask_choice）。
+
+        发出 CHOICE_REQUIRED 事件后挂起，等待外部 resolveChoice()，
+        或在 approvalTimeout 后视为超时。超时返回默认选择。
+
+        Returns:
+            dict: {"selection_id": str, "custom_input": str}
+        """
+        choiceId = gen_tool_call_id()
+        ev = asyncio.Event()
+        self._pendingChoice = (choiceId, ev)
+        traceId = stream.traceId
+        sessionId = stream._sessionId
+
+        stream.emit(EventType.CHOICE_REQUIRED, {
+            "question": question,
+            "options": options,
+            "allow_custom": allow_custom,
+            "action_id": choiceId,
+        })
+
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=self._approvalTimeout)
+        except asyncio.TimeoutError:
+            self._pendingChoice = None
+            self._choiceDecision = None
+            self._trace(traceId, sessionId, "choice.timeout", {
+                "question": question[:100],
+            })
+            stream.emit(EventType.CHOICE_RESOLVED, {
+                "action_id": choiceId,
+                "selection_id": "__timeout__",
+                "custom_input": "",
+            })
+            return {"selection_id": "__timeout__", "custom_input": ""}
+
+        decision = self._choiceDecision or {"selection_id": "__timeout__", "custom_input": ""}
+        self._pendingChoice = None
+        self._choiceDecision = None
+
+        self._trace(traceId, sessionId, "choice.resolved", {
+            "selection_id": decision["selection_id"],
+            "has_custom": bool(decision.get("custom_input", "")),
+        })
+        stream.emit(EventType.CHOICE_RESOLVED, {
+            "action_id": choiceId,
+            "selection_id": decision["selection_id"],
+            "custom_input": decision.get("custom_input", ""),
+        })
+        return {
+            "selection_id": decision["selection_id"],
+            "custom_input": decision.get("custom_input", ""),
+        }
 
     def _trace(self, traceId: str, sessionId: str,
                eventType: str, data: dict) -> None:

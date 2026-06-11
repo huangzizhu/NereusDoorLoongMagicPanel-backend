@@ -75,6 +75,32 @@ def submitPlan(
     return "[计划已提交，等待审批]"
 
 
+# ── 特殊工具：ask_choice（选择题交互，由 AgentCore 拦截）──
+
+def ask_choice(
+    question: str = "",
+    options: list[dict] | None = None,
+) -> str:
+    """向用户提出一个选择题，等待用户选择后继续。
+
+    ⚠ 这是 PLAN 模式下向用户提问的唯一合法方式。严禁在文本回复中直接提问。
+
+    在 PLAN 模式下，提交计划前必须使用此工具向用户澄清需求细节。
+    你可以多次调用此工具进行多轮询问，直到你确信已经完全理解用户意图。
+    当发现用户前后回答矛盾时，追问澄清。
+
+    Args:
+        question: 向用户展示的问题描述
+        options: 选项列表，每项必须包含以下字段：
+            - id (str): 稳定标识，使用大写字母 "A", "B", "C"...
+            - title (str): 选项展示文本，简洁明了
+            - summary (str, 可选): 副文本说明
+            示例: [{"id": "A", "title": "磁盘空间清理", "summary": "分析大文件并清理"}]
+    """
+    # 实际逻辑由 AgentCore 拦截处理，此处仅作为 schema 定义
+    return "[等待用户选择...]"
+
+
 TOOL_RISK_LEVELS: dict[str, str] = {
     "getWorkspaceContext": "read_only",
     "listFiles": "read_only",
@@ -107,6 +133,7 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "explainToolError": "read_only",
     "getRecentCommandResults": "read_only",
     "submitPlan": "read_only",
+    "ask_choice": "read_only",
     "runCommand": "dangerous",
     "webFetch": "read_only",
     "webSearch": "read_only",
@@ -145,6 +172,7 @@ TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
     "explainToolError": {"agentCore": True},
     "getRecentCommandResults": {"agentCore": True},
     "submitPlan": {"agentCore": True, "planSubmission": True},
+    "ask_choice": {"agentCore": True, "elicitation": True},
     "runCommand": {
         "agentCore": True,
         "usesShell": False,
@@ -195,6 +223,7 @@ AGENT_TOOL_FUNCTIONS: tuple[Callable[..., Any], ...] = (
     explainToolError,
     getRecentCommandResults,
     submitPlan,
+    ask_choice,
     webFetch,
     webSearch,
     runCommand,

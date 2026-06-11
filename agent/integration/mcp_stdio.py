@@ -150,6 +150,19 @@ class StdioMcpRegistry:
 
     def listTools(self) -> list[dict]:
         schemas = [_mcpToolToOpenAiSchema(tool) for tool in self._tools]
+        for schema in schemas:
+            name = schema["function"]["name"]
+            risk = self._riskLevels.get(name, ToolRiskLevel.WRITE)
+            if risk != ToolRiskLevel.READ_ONLY:
+                params = schema.setdefault("function", {}).setdefault("parameters", {})
+                props = params.setdefault("properties", {})
+                props["reason"] = {
+                    "type": "string",
+                    "description": "调用此工具的原因和目的，向用户解释你的意图。必须说明你要做什么、为什么这样做。",
+                }
+                required = params.setdefault("required", [])
+                if "reason" not in required:
+                    required.append("reason")
         schemas.sort(key=lambda item: item["function"]["name"])
         return schemas
 
@@ -295,6 +308,19 @@ class _AggregatedRegistry:
 
     def listTools(self) -> list[dict]:
         schemas = [_mcpToolToOpenAiSchema(tool) for tool in self._tool_dicts]
+        for schema in schemas:
+            name = schema["function"]["name"]
+            risk = self._risk_levels.get(name, ToolRiskLevel.WRITE)
+            if risk != ToolRiskLevel.READ_ONLY:
+                params = schema.setdefault("function", {}).setdefault("parameters", {})
+                props = params.setdefault("properties", {})
+                props["reason"] = {
+                    "type": "string",
+                    "description": "调用此工具的原因和目的，向用户解释你的意图。必须说明你要做什么、为什么这样做。",
+                }
+                required = params.setdefault("required", [])
+                if "reason" not in required:
+                    required.append("reason")
         schemas.sort(key=lambda item: item["function"]["name"])
         return schemas
 

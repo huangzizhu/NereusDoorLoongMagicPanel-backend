@@ -28,6 +28,8 @@ class EventType(str, Enum):
     PLAN_PROPOSED = "plan.proposed"
     PLAN_APPROVED = "plan.approved"
     PLAN_REJECTED = "plan.rejected"
+    CHOICE_REQUIRED = "choice.required"
+    CHOICE_RESOLVED = "choice.resolved"
     TEXT_DELTA = "text.delta"
     TEXT_DONE = "text.done"
     ERROR = "error"
