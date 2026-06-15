@@ -201,20 +201,17 @@ class AgentGatewayService(Singleton):
 
                             # ── 继续 AgentCore 循环 ──
                             # tool result 已写入 DB，历史完整
-                            # 启动新 AgentCore，LLM 看到 "请继续" 后自然输出
+                            # _runTurn 会: 新建干净 runner → 从 DB 拉上下文
+                            # → LLM 看到完整的 tool 链 → 自然继续
                             if approved and execution_ok:
-                                cont_history = (
-                                    self.sessionDao.getRecentConversationHistory(
-                                        sessionId
+                                # invalidateRuntime 已清理旧 runtime
+                                cont_task = asyncio.create_task(
+                                    self._runTurn(
+                                        websocket, sendLock,
+                                        userId, sessionId, "",
                                     )
                                 )
-                                async for ev in runtime.submit(
-                                    "请继续", conversationHistory=cont_history
-                                ):
-                                    await self._send(
-                                        websocket, sendLock,
-                                        self._formatAgentEvent(ev),
-                                    )
+                                self._turnTasks[sessionId] = cont_task
                             else:
                                 await self._send(websocket, sendLock, self._serverEvent(
                                     "done", sessionId, None, {}

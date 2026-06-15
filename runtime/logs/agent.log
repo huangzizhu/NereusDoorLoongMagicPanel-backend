@@ -32,3 +32,7 @@
 {"ts": 1781510069.344, "time": "2026-06-15T15:54:29", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连审批恢复: session=sess_d51c082c5f9e action=tc_7a9f65f6b524 tool=addFirewallPortPrivileged approved=True"}
 {"ts": 1781510346.449, "time": "2026-06-15T15:59:06", "level": "WARNING", "logger": "ndlmpanel.context_mgmt", "message": "closeOrphanToolCalls: 链中断于 role=user, 移除孤立 tool_calls"}
 {"ts": 1781510346.45, "time": "2026-06-15T15:59:06", "level": "WARNING", "logger": "ndlmpanel.context_mgmt", "message": "closeOrphanToolCalls: 链中断于 role=user, 移除孤立 tool_calls"}
+{"ts": 1781511641.487, "time": "2026-06-15T16:20:41", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_783a5829466b tool=removeFirewallPortPrivileged"}
+{"ts": 1781511648.927, "time": "2026-06-15T16:20:48", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连审批恢复: session=sess_783a5829466b action=tc_bbf410c5ee69 tool=removeFirewallPortPrivileged approved=True"}
+{"ts": 1781511679.816, "time": "2026-06-15T16:21:19", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_783a5829466b tool=removeFirewallPortPrivileged"}
+{"ts": 1781511743.243, "time": "2026-06-15T16:22:23", "level": "WARNING", "logger": "ndlmpanel.context_mgmt", "message": "closeOrphanToolCalls: 链中断于 role=user, 移除孤立 tool_calls"}
