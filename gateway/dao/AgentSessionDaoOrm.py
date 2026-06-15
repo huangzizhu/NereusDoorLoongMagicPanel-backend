@@ -142,6 +142,64 @@ class AgentSessionDaoOrm(Singleton):
         finally:
             session.close()
 
+    def getSessionStatus(self, sessionId: str) -> str | None:
+        """获取会话当前状态。"""
+        session = self.SessionLocal()
+        try:
+            row = session.query(AgentSessionOrm.status).filter(
+                AgentSessionOrm.sessionId == sessionId
+            ).first()
+            return row[0] if row else None
+        finally:
+            session.close()
+
+    def updatePendingApproval(self, sessionId: str,
+                               approvalData: dict | None) -> int:
+        """持久化最后一次 APPROVAL_REQUIRED 事件数据。
+
+        Args:
+            sessionId: 会话 ID
+            approvalData: 完整的事件 payload，或 None 表示清除
+
+        Returns:
+            影响行数
+        """
+        session = self.SessionLocal()
+        try:
+            value = json.dumps(approvalData, ensure_ascii=False) if approvalData else None
+            rowCount = session.query(AgentSessionOrm).filter(
+                AgentSessionOrm.sessionId == sessionId
+            ).update({
+                "pendingApproval": value,
+                "updatedAt": datetime.now(),
+            })
+            session.commit()
+            return rowCount
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def clearPendingApproval(self, sessionId: str) -> int:
+        """清除待审批事件记录。"""
+        return self.updatePendingApproval(sessionId, None)
+
+    def getPendingApproval(self, sessionId: str) -> dict | None:
+        """读取持久化的待审批事件。"""
+        session = self.SessionLocal()
+        try:
+            row = session.query(AgentSessionOrm.pendingApproval).filter(
+                AgentSessionOrm.sessionId == sessionId
+            ).first()
+            if not row or not row[0]:
+                return None
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        finally:
+            session.close()
+
     def updateSessionTitle(self, sessionId: str, title: str) -> int:
         """更新会话标题。"""
         session = self.SessionLocal()

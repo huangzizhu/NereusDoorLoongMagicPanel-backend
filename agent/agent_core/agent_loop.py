@@ -19,7 +19,7 @@ from ndlmpanel_agent.mcp.server.dispatcher import McpDispatcher
 from ndlmpanel_agent.mcp.protocol.json_rpc import encodeRequest
 from agent.agent_core.prompt_builder import PromptBuilder
 from agent.llm_providers.base import LLMProvider
-from agent.context_mgmt.compressor import compressHistory
+from agent.context_mgmt.compressor import closeOrphanToolCalls, compressHistory
 from agent.trace_log.recorder import TraceRecorder
 from agent.agent_router.router import AgentMode
 from agent.agent_router.plan_schema import planFromSubmitArgs, formatPlanForPrompt
@@ -255,6 +255,12 @@ class AgentCore:
         self._msgs = self._promptBuilder.build(
             userMessage, conversationHistory=conversationHistory,
         )
+
+        # ── ToolCall 完整性校验 ──
+        # 移除历史中残留的孤立 tool_calls，防止 LLM API 400
+        # （发生场景：WS 断开导致审批残留）
+        self._msgs = closeOrphanToolCalls(self._msgs)
+
         state = LoopState.THINKING
         roundCount = 0
         response: LLMResponse | None = None
@@ -533,7 +539,8 @@ class AgentCore:
                             "ai_reason": ai_reason,
                         })
                         toolOutput = await self._handleApproval(
-                            stream, name, args, reason, ai_reason=ai_reason)
+                            stream, name, args, reason, ai_reason=ai_reason,
+                            call_id=callId)
                     else:
                         toolOutput = await self._executeTool(name, args)
 
@@ -585,11 +592,15 @@ class AgentCore:
 
     async def _handleApproval(self, stream: EventStream, name: str,
                               args: dict, reason: str,
-                              ai_reason: str = "") -> str:
+                              ai_reason: str = "",
+                              call_id: str = "") -> str:
         """高危操作人工审批闭环。
 
         发出 APPROVAL_REQUIRED 事件后，挂起等待外部 approve()/reject()，
         或在 approvalTimeout 后视为拒绝。只有获得批准才真正执行工具。
+
+        Args:
+            call_id: LLM 发起的 tool_call 原始 id（用于 WS 重连时匹配）
         """
         actionId = gen_tool_call_id()
         ev = asyncio.Event()
@@ -598,7 +609,7 @@ class AgentCore:
         stream.emit(EventType.APPROVAL_REQUIRED, {
             "tool_name": name, "arguments": args,
             "action_id": actionId, "reason": reason,
-            "ai_reason": ai_reason,
+            "ai_reason": ai_reason, "call_id": call_id,
         })
 
         try:

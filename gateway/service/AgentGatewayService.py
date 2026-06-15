@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 from fastapi import WebSocket
@@ -17,6 +18,8 @@ from gateway.dao.AgentSessionDaoOrm import AgentSessionDaoOrm
 from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
 from gateway.service.AgentLlmProfileService import AgentLlmProfileService
 from pojo.Agent import AgentSessionCreate
+
+_logger = logging.getLogger("ndlmpanel.gateway")
 
 
 class AgentGatewayService(Singleton):
@@ -79,6 +82,22 @@ class AgentGatewayService(Singleton):
                 "session.created", sessionId, None, {"sessionId": sessionId}
             ))
 
+        # ── WS 重连恢复：检测待审批事件 ──
+        # 如果上次 WS 断开时有残留的 APPROVAL_REQUIRED，
+        # 重新推送给前端让审批弹窗恢复
+        pending_approval = self.sessionDao.getPendingApproval(sessionId)
+        if pending_approval:
+            _logger.info(
+                "WS 重连检测到待审批事件: session=%s tool=%s",
+                sessionId, pending_approval.get("tool_name", "?"),
+            )
+            await self._send(websocket, sendLock, self._serverEvent(
+                "approval.resume", sessionId, None, {
+                    "message": "检测到上次断连时有待审批操作，请确认是否继续",
+                    "approval": pending_approval,
+                }
+            ))
+
         try:
             while True:
                 payload = await websocket.receive_json()
@@ -112,6 +131,95 @@ class AgentGatewayService(Singleton):
                     ok = False
                     if runtime is not None and actionId:
                         ok = runtime.approve(actionId) if approved else runtime.reject(actionId, reason)
+                    # ── WS 重连后审批恢复路径 ──
+                    # runtime 已销毁（WS 断连导致），但 DB 中还有 pendingApproval
+                    if not ok and actionId:
+                        pending = self.sessionDao.getPendingApproval(sessionId)
+                        if pending and pending.get("action_id") == actionId:
+                            tool_name = pending.get("tool_name", "")
+                            tool_args = pending.get("arguments", {})
+                            _logger.info(
+                                "WS 重连审批恢复: session=%s action=%s tool=%s approved=%s",
+                                sessionId, actionId, tool_name, approved,
+                            )
+
+                            # 重建 runtime 并实际执行工具
+                            execution_ok = False
+                            execution_output = ""
+                            if approved:
+                                try:
+                                    session_obj = self.sessionDao.getSession(
+                                        sessionId, userId
+                                    )
+                                    if session_obj is not None:
+                                        exec_runtime = self._getRuntimeSession(
+                                            session_obj
+                                        )
+                                        execution_output = (
+                                            await exec_runtime._core._executeTool(
+                                                tool_name, tool_args
+                                            )
+                                        )
+                                        execution_ok = True
+                                except Exception as exc:
+                                    execution_output = str(exc)
+                                    execution_ok = False
+                            else:
+                                execution_output = f"[用户拒绝] 工具 {tool_name} 未执行。原因: {reason}"
+
+                            # 写入 tool 结果到 DB
+                            self.sessionDao.addMessage(
+                                sessionId, "tool",
+                                content=str(execution_output)[:2000],
+                                roundIndex=self.sessionDao.getNextRoundIndex(sessionId),
+                                toolCallId=pending.get("call_id", actionId),
+                                metadata={"tool_name": tool_name},
+                            )
+
+                            # 清除 pending
+                            self.sessionDao.clearPendingApproval(sessionId)
+                            self.sessionDao.updateStatus(sessionId, "idle")
+                            # 清理 runtime（下次 submit 时重建）
+                            self.invalidateRuntime(sessionId)
+
+                            # 发送 approval 和 tool result 事件
+                            await self._send(websocket, sendLock, self._serverEvent(
+                                "approval.resolved", sessionId, None, {
+                                    "action_id": actionId,
+                                    "approved": approved,
+                                    "reason": reason,
+                                }
+                            ))
+                            await self._send(websocket, sendLock, self._serverEvent(
+                                "tool.result", sessionId, None, {
+                                    "call_id": pending.get("call_id", actionId),
+                                    "tool_name": tool_name,
+                                    "success": execution_ok,
+                                    "output": str(execution_output)[:2000],
+                                }
+                            ))
+
+                            # ── 继续 AgentCore 循环 ──
+                            # tool result 已写入 DB，历史完整
+                            # 启动新 AgentCore，LLM 看到 "请继续" 后自然输出
+                            if approved and execution_ok:
+                                cont_history = (
+                                    self.sessionDao.getRecentConversationHistory(
+                                        sessionId
+                                    )
+                                )
+                                async for ev in runtime.submit(
+                                    "请继续", conversationHistory=cont_history
+                                ):
+                                    await self._send(
+                                        websocket, sendLock,
+                                        self._formatAgentEvent(ev),
+                                    )
+                            else:
+                                await self._send(websocket, sendLock, self._serverEvent(
+                                    "done", sessionId, None, {}
+                                ))
+                            ok = True
                     if not ok:
                         await self._send(websocket, sendLock, self._serverEvent(
                             "error", sessionId, None, {"message": "审批动作不存在或已处理"}
@@ -171,6 +279,7 @@ class AgentGatewayService(Singleton):
                 elif msgType == "cancel":
                     await self._cancelTurn(sessionId)
                     self.sessionDao.updateStatus(sessionId, "idle")
+                    self.sessionDao.clearPendingApproval(sessionId)
                     await self._send(websocket, sendLock, self._serverEvent(
                         "done", sessionId, None, {"reason": "cancelled"}
                     ))
@@ -248,12 +357,23 @@ class AgentGatewayService(Singleton):
 
                 elif event.type == EventType.APPROVAL_REQUIRED:
                     self.sessionDao.updateStatus(sessionId, "waiting_approval")
+                    # 持久化审批事件数据（WS 重连时恢复用）
+                    self.sessionDao.updatePendingApproval(sessionId, {
+                        "action_id": event.data.get("action_id", ""),
+                        "tool_name": event.data.get("tool_name", ""),
+                        "arguments": event.data.get("arguments", {}),
+                        "reason": event.data.get("reason", ""),
+                        "ai_reason": event.data.get("ai_reason", ""),
+                        "call_id": event.data.get("call_id", ""),
+                    })
                 elif event.type == EventType.APPROVAL_RESOLVED:
                     self.sessionDao.updateStatus(sessionId, "running")
+                    self.sessionDao.clearPendingApproval(sessionId)
                 elif event.type == EventType.ERROR:
                     self.sessionDao.updateStatus(
                         sessionId, "error", lastError=str(event.data.get("message", ""))
                     )
+                    self.sessionDao.clearPendingApproval(sessionId)
                 elif event.type == EventType.CHOICE_REQUIRED:
                     self.sessionDao.updateStatus(sessionId, "waiting_choice")
                 elif event.type == EventType.CHOICE_RESOLVED:
@@ -298,6 +418,7 @@ class AgentGatewayService(Singleton):
                         usageThisRound = event.data.get("usage", {})
                 elif event.type == EventType.DONE:
                     doneSent = True
+                    self.sessionDao.clearPendingApproval(sessionId)
 
                 await self._send(websocket, sendLock, self._formatAgentEvent(event))
 
@@ -325,9 +446,12 @@ class AgentGatewayService(Singleton):
                 ))
         except asyncio.CancelledError:
             self.sessionDao.updateStatus(sessionId, "idle")
+            # 注意：不断连时不清除 pendingApproval
+            # WS 断连后 pendingApproval 仍然保留，重连时通过 approval.resume 恢复
             raise
         except Exception as exc:
             self.sessionDao.updateStatus(sessionId, "error", lastError=str(exc))
+            self.sessionDao.clearPendingApproval(sessionId)
             await self._send(websocket, sendLock, self._serverEvent(
                 "error", sessionId, traceId, {"message": str(exc)}
             ))

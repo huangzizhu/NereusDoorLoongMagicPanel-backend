@@ -20,6 +20,7 @@ class AgentSessionOrm(OrmEngine().getBase()):
     safetyPolicy = Column(String(50), nullable=False, default="default")
     summary = Column(Text, nullable=True)
     lastError = Column(Text, nullable=True)
+    pendingApproval = Column(Text, nullable=True)
     createdAt = Column(DateTime, default=datetime.now)
     updatedAt = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     finishedAt = Column(DateTime, nullable=True)

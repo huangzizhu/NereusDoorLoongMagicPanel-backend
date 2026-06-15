@@ -5,6 +5,97 @@
 """
 from __future__ import annotations
 
+import logging
+
+_logger = logging.getLogger("ndlmpanel.context_mgmt")
+
+
+def closeOrphanToolCalls(messages: list[dict]) -> list[dict]:
+    """移除没有对应 tool 响应的孤立 assistant tool_calls 消息。
+
+    场景：WS 断开导致审批残留，assistant 发了 tool_calls 但未被执行。
+    如果不清理，LLM API 会报 400：
+      "Invalid parameter: messages with role 'assistant' must have a response..."
+
+    策略（两层防御）：
+      第一层：遍历时跟踪 tool_call_id → 检查后续是否有匹配的 tool 响应
+      第二层：如果遍历完还有 pending 的 tool_calls → 回滚删除
+
+    Args:
+        messages: OpenAI 格式消息列表
+
+    Returns:
+        清理后的消息列表（不修改输入）
+    """
+    if not messages:
+        return messages
+
+    result: list[dict] = []
+    pending_tc = False
+    tc_ids: set[str] = set()
+    responded_ids: set[str] = set()
+    orphan_insertion_index: int | None = None
+
+    for msg in messages:
+        role = msg.get("role", "")
+
+        if role == "assistant" and msg.get("tool_calls"):
+            pending_tc = True
+            result.append(msg)
+            orphan_insertion_index = len(result) - 1
+            tc_ids = {tc.get("id", "") for tc in msg["tool_calls"] if tc.get("id")}
+            responded_ids = set()
+            continue
+
+        if role == "tool" and pending_tc:
+            call_id = msg.get("tool_call_id", "")
+            if call_id:
+                responded_ids.add(call_id)
+            result.append(msg)
+            if tc_ids and tc_ids == responded_ids:
+                pending_tc = False
+                orphan_insertion_index = None
+            continue
+
+        if pending_tc and role == "assistant":
+            _logger.warning(
+                "closeOrphanToolCalls: 发现孤立 tool_calls (tc=%s, responded=%s), 已移除",
+                tc_ids, responded_ids,
+            )
+            if orphan_insertion_index is not None:
+                result = result[:orphan_insertion_index]
+                orphan_insertion_index = None
+            pending_tc = False
+            tc_ids = set()
+            responded_ids = set()
+            result.append(msg)
+            continue
+
+        if pending_tc:
+            if orphan_insertion_index is not None:
+                _logger.warning(
+                    "closeOrphanToolCalls: 链中断于 role=%s, 移除孤立 tool_calls",
+                    role,
+                )
+                result = result[:orphan_insertion_index]
+                orphan_insertion_index = None
+            pending_tc = False
+            tc_ids = set()
+            responded_ids = set()
+            result.append(msg)
+            continue
+
+        result.append(msg)
+
+    if pending_tc and orphan_insertion_index is not None:
+        _logger.warning(
+            "closeOrphanToolCalls: 末尾孤立 tool_calls (tc=%s, responded=%s), 已移除",
+            tc_ids, responded_ids,
+        )
+        result = result[:orphan_insertion_index]
+
+    return result
+
 
 def compressHistory(
     messages: list[dict],
@@ -73,7 +164,6 @@ def _buildSummary(messages: list[dict]) -> str:
         if role == "user" and content:
             topics.append(content[:50])
         elif role == "tool":
-            # 提取工具名
             tcId = m.get("tool_call_id", "")
             toolNames.append(tcId)
 

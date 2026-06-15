@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     safetyPolicy TEXT NOT NULL DEFAULT 'default',
     summary TEXT,
     lastError TEXT,
+    pendingApproval TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     finishedAt TEXT,
