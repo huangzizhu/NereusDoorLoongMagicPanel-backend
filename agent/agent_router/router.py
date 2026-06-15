@@ -158,29 +158,12 @@ class AgentRouter:
         toolSchemas: list[dict],
         getRiskLevel: Callable[[str], ToolRiskLevel],
     ) -> list[dict]:
-        """根据模式过滤 LLM 可见的工具 schema 列表。
+        """返回完整工具 schema 列表 — 不再按模式过滤。
 
-        READ_ONLY / PLAN — 只暴露只读工具，让 LLM 根本看不见写入/高危工具
-        AGENT / BREAK_GLASS — 暴露全部工具
-
-        Args:
-            mode: 当前 Agent 运行模式
-            toolSchemas: 从 registry.listTools() 获取的完整工具 schema 列表
-                （OpenAI function-calling 格式，每条含 {"function": {"name": ...}}）
-            getRiskLevel: 根据工具名获取风险等级的回调函数
-                （通常是 registry.getRiskLevel）
-
-        Returns:
-            过滤后的工具 schema 列表
+        KV-Cache 优化：所有模式暴露相同工具列表 → tools 参数不变 → 前缀缓存命中。
+        模式门控完全下沉到 RuleEngine.checkToolCallWithReason（后端硬规则）。
         """
-        allowed_levels = AgentRouter.getAllowedRiskLevels(mode)
-        # 全部放行 → 跳过遍历
-        if len(allowed_levels) == 3:
-            return toolSchemas
-        return [
-            t for t in toolSchemas
-            if getRiskLevel(t["function"]["name"]) in allowed_levels
-        ]
+        return toolSchemas
 
 
 def getModePrompt(mode: AgentMode | str) -> str:

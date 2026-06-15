@@ -21,7 +21,7 @@ from agent.agent_core.prompt_builder import PromptBuilder
 from agent.llm_providers.base import LLMProvider
 from agent.context_mgmt.compressor import closeOrphanToolCalls, compressHistory
 from agent.trace_log.recorder import TraceRecorder
-from agent.agent_router.router import AgentMode
+from agent.agent_router.router import AgentMode, getModePrompt
 from agent.agent_router.plan_schema import planFromSubmitArgs, formatPlanForPrompt
 
 _logger = logging.getLogger("ndlmpanel.agent_core")
@@ -136,18 +136,39 @@ class AgentCore:
         return self._resolveApproval(actionId, approved=False, reason=reason)
 
     def _switchMode(self, mode: AgentMode) -> None:
-        """切换运行模式，同步更新 LLM 可见的工具列表。
+        """切换运行模式（仅更新 mode 标记）。
 
-        与 AgentSession.switchMode 不同，此方法直接操作核心层组件，
-        不需要经过 session 层。trace 日志由调用方负责记录。
+        KV-Cache 优化：不再重新 setTools — tools 参数始终不变。
+        模式门控通过 _injectModePrompt（前端文本约束）+ RuleEngine（后端硬规则）实现。
         """
         self._mode = mode
-        from agent.agent_router.router import AgentRouter
-        visible_tools = AgentRouter.filterToolsByMode(
-            mode, self._registry.listTools(), self._registry.getRiskLevel,
-        )
-        if hasattr(self._llm, "setTools"):
-            self._llm.setTools(visible_tools)
+
+    def _injectModePrompt(self, messages: list[dict]) -> list[dict]:
+        """在 LLM 调用前注入当前模式指令。
+
+        插入位置：在最后一条 user 消息之前。
+        所有模式统一注入（包括 AGENT），确保消息结构一致。
+
+        注意：本方法不修改传入的 messages（self._msgs），
+        仅构造注入后的副本发送给 LLM。self._msgs 保持与 DB history 一致。
+        """
+        result = list(messages)
+
+        # 找到最后一条 role: user 消息的位置
+        last_user_idx = -1
+        for i in range(len(result) - 1, -1, -1):
+            if result[i].get("role") == "user":
+                last_user_idx = i
+                break
+
+        mode_msg = {"role": "system", "content": getModePrompt(self._mode)}
+
+        if last_user_idx == -1:
+            result.append(mode_msg)
+        else:
+            result.insert(last_user_idx, mode_msg)
+
+        return result
 
     def _resolveApproval(self, actionId: str, approved: bool,
                          reason: str) -> bool:
@@ -276,13 +297,16 @@ class AgentCore:
                 self._trace(traceId, sessionId, "llm.request",
                             {"round": roundCount, "msgs_count": len(self._msgs)})
 
+                # ── 注入模式指令（所有模式统一注入，保持消息结构一致）──
+                msgs_with_mode = self._injectModePrompt(self._msgs)
+
                 # ── 真流式：逐 token 推送 TEXT_DELTA ──
                 contentParts: list[str] = []
                 toolCalls: list[dict] = []
                 finishReason = ""
                 usage: dict = {}
 
-                async for chunk in self._llm.chatStream(self._msgs):
+                async for chunk in self._llm.chatStream(msgs_with_mode):
                     if chunk.content:
                         contentParts.append(chunk.content)
                         # 立即推送文本 delta（真正的流式输出）
@@ -696,7 +720,7 @@ class AgentCore:
         self._pendingPlanProps = None
 
         if decision["approved"]:
-            # 批准：切换到 AGENT 模式，重新过滤工具列表
+            # 批准：切换到 AGENT 模式
             self._switchMode(AgentMode.AGENT)
             self._trace(traceId, sessionId, "mode.switch", {
                 "from": AgentMode.PLAN.value,
@@ -707,7 +731,7 @@ class AgentCore:
                 "summary": plan.summary,
                 "step_count": len(plan.steps),
             })
-            # 更新 tool 响应
+            # 更新 tool 响应（让 LLM 看到审批结果）
             self._updateToolResponse(callId, "[计划已批准，开始执行]")
             plan_text = formatPlanForPrompt(plan)
             # 注入已批准的计划作为上下文

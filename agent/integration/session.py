@@ -21,7 +21,7 @@ from agent.agent_core.prompt_builder import PromptBuilder
 from agent.agent_core.agent_loop import AgentCore
 from agent.trace_log.recorder import TraceRecorder
 from agent.llm_providers.factory import createProvider
-from agent.agent_router.router import AgentMode, AgentRouter, getModePrompt
+from agent.agent_router.router import AgentMode
 from agent.agent_mcp.server.tool_adapter import buildAgentTools
 from agent.integration.mcp_stdio import MultiServerSpec, MultiStdioMcpBridge, StdioMcpBridge
 
@@ -68,8 +68,8 @@ class AgentSession:
         except FileNotFoundError:
             sysPrompt = "你是一个智能运维助手。"
 
-        # 注入模式约束 (ReadOnly/Plan/Agent/BreakGlass)
-        sysPrompt += getModePrompt(mode)
+        # 模式指令不再拼入 system prompt — 由 AgentCore._injectModePrompt 在每次 LLM 调用前注入
+        # （KV-Cache 优化：固定 system prompt → 前缀缓存命中）
         try:
             with open(safetyRulesPath) as f:
                 safetyRules = f.read()
@@ -90,13 +90,11 @@ class AgentSession:
         # LLM Provider — 由工厂按 config.llm_provider 选择，
         # 无 api_key 时自动回退 MockProvider
         self._llm = createProvider(config)
-        # 根据模式过滤 LLM 可见的工具列表
-        # （READ_ONLY/PLAN 模式只暴露只读工具，从源头让 LLM 看不见写入/高危工具）
-        visible_tools = AgentRouter.filterToolsByMode(
-            mode, registry.listTools(), registry.getRiskLevel,
-        )
+        # 注册全部工具 — 不再按模式过滤
+        # （KV-Cache 优化：tools 参数始终一致 → 前缀缓存命中）
+        # 模式门控下沉到 RuleEngine（后端硬规则）
         if hasattr(self._llm, "setTools"):
-            self._llm.setTools(visible_tools)
+            self._llm.setTools(registry.listTools())
 
         self._recorder = TraceRecorder(config.trace_db_path)
         self._core = AgentCore(
@@ -243,23 +241,19 @@ class AgentSession:
     def switchMode(self, mode: AgentMode) -> None:
         """切换 Agent 运行模式，即时生效。
 
+        KV-Cache 优化：不再重新 setTools — tools 参数始终不变。
+        模式门控通过 AgentCore._injectModePrompt（前端文本约束）
+        + RuleEngine（后端硬规则）实现。
+
         更新影响：
         1. self._mode / self._core._mode — 影响 RuleEngine 执行层门控
-        2. LLM 可见的工具列表 — 重新过滤并推送（影响 LLM 下一轮调用）
-        3. AgentCore 的 _mode — 影响 EXECUTING 分支行为
+        2. AgentCore 的 _mode — 影响 _injectModePrompt 选择哪个模式指令
 
         Args:
             mode: 目标模式（read_only / plan / agent / break_glass / executing）
         """
         self._mode = mode
         self._core._mode = mode
-
-        # 重新过滤工具列表，让 LLM 立即可见
-        visible_tools = AgentRouter.filterToolsByMode(
-            mode, self._registry.listTools(), self._registry.getRiskLevel,
-        )
-        if hasattr(self._llm, "setTools"):
-            self._llm.setTools(visible_tools)
 
     def getTrace(self) -> list[dict]:
         """获取当前会话的全部审计记录。"""
