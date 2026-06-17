@@ -200,6 +200,55 @@ class AgentSessionDaoOrm(Singleton):
         finally:
             session.close()
 
+    # ── 选择题（ask_choice）持久化 ──
+
+    def updatePendingChoice(self, sessionId: str,
+                            choiceData: dict | None) -> int:
+        """持久化最后一次 CHOICE_REQUIRED 事件数据。
+
+        Args:
+            sessionId: 会话 ID
+            choiceData: 完整的事件 payload，或 None 表示清除
+
+        Returns:
+            影响行数
+        """
+        session = self.SessionLocal()
+        try:
+            value = json.dumps(choiceData, ensure_ascii=False) if choiceData else None
+            rowCount = session.query(AgentSessionOrm).filter(
+                AgentSessionOrm.sessionId == sessionId
+            ).update({
+                "pendingChoice": value,
+                "updatedAt": datetime.now(),
+            })
+            session.commit()
+            return rowCount
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def clearPendingChoice(self, sessionId: str) -> int:
+        """清除待回复选择题记录。"""
+        return self.updatePendingChoice(sessionId, None)
+
+    def getPendingChoice(self, sessionId: str) -> dict | None:
+        """读取持久化的待回复选择题数据。"""
+        session = self.SessionLocal()
+        try:
+            row = session.query(AgentSessionOrm.pendingChoice).filter(
+                AgentSessionOrm.sessionId == sessionId
+            ).first()
+            if not row or not row[0]:
+                return None
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        finally:
+            session.close()
+
     def updateSessionTitle(self, sessionId: str, title: str) -> int:
         """更新会话标题。"""
         session = self.SessionLocal()
@@ -209,6 +258,31 @@ class AgentSessionDaoOrm(Singleton):
             ).update({"title": title, "updatedAt": datetime.now()})
             session.commit()
             return rowCount
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def markRead(self, sessionId: str) -> bool:
+        """将 completed_unread 状态标记为已读（恢复为 idle）。
+
+        仅对当前状态为 completed_unread 的会话生效。
+
+        Returns:
+            True 表示状态已更新，False 表示状态不是 completed_unread
+        """
+        session = self.SessionLocal()
+        try:
+            rowCount = session.query(AgentSessionOrm).filter(
+                AgentSessionOrm.sessionId == sessionId,
+                AgentSessionOrm.status == "completed_unread",
+            ).update({
+                "status": "idle",
+                "updatedAt": datetime.now(),
+            })
+            session.commit()
+            return rowCount > 0
         except Exception:
             session.rollback()
             raise

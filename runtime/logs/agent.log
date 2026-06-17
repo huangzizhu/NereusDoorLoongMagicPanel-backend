@@ -188,3 +188,34 @@
 {"ts": 1781697875.274, "time": "2026-06-17T20:04:35", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_76606ffac633 title=询问当前工作目录"}
 {"ts": 1781697923.676, "time": "2026-06-17T20:05:23", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "elevation: code=GQHK-CUTC 已同步到 Gateway ElevationService (inline=False script=True)"}
 {"ts": 1781698043.916, "time": "2026-06-17T20:07:23", "level": "ERROR", "logger": "ndlmpanel.agent_core", "message": "AgentCore.run 异常: [E0003] LLM API 请求超时", "exception": "Traceback (most recent call last):\n  File \"/home/he/workspace/python/NereusDoorLoongMagicPanel-backend/agent/agent_core/agent_loop.py\", line 251, in run\n    await self._runLoop(userMessage, stream, conversationHistory)\n  File \"/home/he/workspace/python/NereusDoorLoongMagicPanel-backend/agent/agent_core/agent_loop.py\", line 311, in _runLoop\n    async for chunk in self._llm.chatStream(msgs_with_mode):\n    ...<11 lines>...\n            finishReason = chunk.finish_reason\n  File \"/home/he/workspace/python/NereusDoorLoongMagicPanel-backend/agent/llm_providers/openai_compat.py\", line 88, in chatStream\n    raise self._wrapHttpError(item)\nagent.shared.errors.AgentError: [E0003] LLM API 请求超时"}
+{"ts": 1781699898.85, "time": "2026-06-17T20:38:18", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_d10d862396dc tool=statPaths"}
+{"ts": 1781699922.087, "time": "2026-06-17T20:38:42", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_d10d862396dc tool=searchText"}
+{"ts": 1781699953.054, "time": "2026-06-17T20:39:13", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_d10d862396dc tool=grepFileOrDirectory"}
+{"ts": 1781699965.002, "time": "2026-06-17T20:39:25", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_d10d862396dc tool=grepFileOrDirectory"}
+{"ts": 1781699990.292, "time": "2026-06-17T20:39:50", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_d10d862396dc tool=listSingleFileOrDirectory"}
+{"ts": 1781700007.133, "time": "2026-06-17T20:40:07", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_d10d862396dc tool=grepFileOrDirectory"}
+{"ts": 1781700025.802, "time": "2026-06-17T20:40:25", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_d10d862396dc title=列出所有工具并调用只读工具"}
+{"ts": 1781700215.935, "time": "2026-06-17T20:43:35", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Agent 消息排队: session=sess_d10d862396dc queue_size=1"}
+{"ts": 1781700305.116, "time": "2026-06-17T20:45:05", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_d10d862396dc tool=submitElevation"}
+{"ts": 1781700323.322, "time": "2026-06-17T20:45:23", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Agent 消费排队消息: session=sess_d10d862396dc remaining=0"}
+{"ts": 1781702038.005, "time": "2026-06-17T21:13:58", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_866b646aaee6 title=请求列出并调用所有只读工具"}
+{"ts": 1781702389.648, "time": "2026-06-17T21:19:49", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_866b646aaee6 tool=listDirectory"}
+{"ts": 1781702406.644, "time": "2026-06-17T21:20:06", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_866b646aaee6 tool=listDirectory"}
+{"ts": 1781702975.16, "time": "2026-06-17T21:29:35", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_866b646aaee6 tool=listDirectory"}
+{"ts": 1781703057.481, "time": "2026-06-17T21:30:57", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_866b646aaee6 tool=submitElevation"}
+{"ts": 1781703807.702, "time": "2026-06-17T21:43:27", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_866b646aaee6 tool=listDirectory"}
+{"ts": 1781703829.667, "time": "2026-06-17T21:43:49", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "_syncElevation: code=HPFM-DAL4 session=sess_866b646aaee6 registered"}
+{"ts": 1781704297.239, "time": "2026-06-17T21:51:37", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_866b646aaee6 tool=listDirectory"}
+{"ts": 1781704332.661, "time": "2026-06-17T21:52:12", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "_syncElevation: code=KNB8-SQCA session=sess_866b646aaee6 registered"}
+{"ts": 1781706457.165, "time": "2026-06-17T22:27:37", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "_syncElevation: code=39QB-P4UK session=sess_f2c3b9227938 registered"}
+{"ts": 1781706461.65, "time": "2026-06-17T22:27:41", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_f2c3b9227938 title=提交执行clean_old_logs.sh脚本"}
+{"ts": 1781707562.481, "time": "2026-06-17T22:46:02", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "_syncElevation: code=Q2YJ-Q5QV session=sess_0b2efbc2d6ed registered"}
+{"ts": 1781707568.019, "time": "2026-06-17T22:46:08", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_0b2efbc2d6ed title=申请执行清理旧日志脚本"}
+{"ts": 1781707710.331, "time": "2026-06-17T22:48:30", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待回复选择题: session=sess_0b2efbc2d6ed question=请选择您喜欢的编程语言："}
+{"ts": 1781707716.398, "time": "2026-06-17T22:48:36", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待回复选择题: session=sess_0b2efbc2d6ed question=请选择您喜欢的编程语言："}
+{"ts": 1781707761.225, "time": "2026-06-17T22:49:21", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_0b2efbc2d6ed tool=manageSystemServicePrivileged"}
+{"ts": 1781708412.749, "time": "2026-06-17T23:00:12", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "_syncElevation: code=5YSR-JRPL session=sess_296ed3a0d5e3 registered"}
+{"ts": 1781708418.344, "time": "2026-06-17T23:00:18", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_296ed3a0d5e3 title=请求执行clean_old_logs.sh脚本"}
+{"ts": 1781708512.142, "time": "2026-06-17T23:01:52", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_8fab84d50992 tool=manageSystemServicePrivileged"}
+{"ts": 1781708526.677, "time": "2026-06-17T23:02:06", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_8fab84d50992 tool=manageSystemServicePrivileged"}
+{"ts": 1781708541.225, "time": "2026-06-17T23:02:21", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_8fab84d50992 title=连续5次重启nginx请求"}

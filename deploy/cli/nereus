@@ -243,6 +243,7 @@ def cmd_approve(code: str):
 
     # 1. 查询 code 信息
     result = api_get(f"/codes/{code}")
+    print(result)
     if not _is_success(result):
         die(result.get("message", "查询失败"))
     data = result.get("data", {})

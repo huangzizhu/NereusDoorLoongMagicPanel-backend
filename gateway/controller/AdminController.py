@@ -82,7 +82,7 @@ class AdminController(AbstractController):
             return Response.success(data=pending)
 
         @self.router.post("/approve")
-        def approve_code(body: dict) -> ResponseModel:
+        async def approve_code(body: dict) -> ResponseModel:
             """批准一个 pending 的 code。
 
             Body: {"code": "NGA7-K3X9", "approved_by": "admin"}
@@ -97,23 +97,17 @@ class AdminController(AbstractController):
             if token is None:
                 return Response.error(msg="批准失败：code 不存在或状态不是 pending")
 
-            # 推送 WS 事件通知前端（同步函数中通过 get_event_loop 获取 loop）
-            import asyncio
+            # 推送 WS 事件通知前端（async handler 可直接 await）
             from gateway.service.AgentGatewayService import AgentGatewayService
             gw = AgentGatewayService()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(gw.pushElevationEvent(
-                        token.session_id, "elevation.resolved", {
-                            "status": "approved",
-                            "code": code,
-                            "token_id": token.token_id,
-                            "message": "管理员已批准特权请求，Agent 可继续执行",
-                        }
-                    ))
-            except RuntimeError:
-                pass  # 没有 event loop 时静默跳过 WS 推送
+            await gw.pushElevationEvent(
+                token.session_id, "elevation.resolved", {
+                    "status": "approved",
+                    "code": code,
+                    "token_id": token.token_id,
+                    "message": "管理员已批准特权请求，Agent 可继续执行",
+                }
+            )
 
             return Response.success(data={
                 "status": "approved",
@@ -125,7 +119,7 @@ class AdminController(AbstractController):
             })
 
         @self.router.post("/reject")
-        def reject_code(body: dict) -> ResponseModel:
+        async def reject_code(body: dict) -> ResponseModel:
             """拒绝一个 pending 的 code。
 
             Body: {"code": "NGA7-K3X9", "reason": "操作风险过高"}
@@ -136,7 +130,21 @@ class AdminController(AbstractController):
             if not code:
                 return Response.error(msg="缺少 code")
 
-            self.elevation_service.reject_code(code, reason)
+            entry = self.elevation_service.get_code(code)
+            if entry:
+                self.elevation_service.reject_code(code, reason)
+                # 推送 WS 事件通知前端
+                from gateway.service.AgentGatewayService import AgentGatewayService
+                gw = AgentGatewayService()
+                await gw.pushElevationEvent(
+                    entry.session_id, "elevation.resolved", {
+                        "status": "rejected",
+                        "code": code,
+                        "reason": reason,
+                        "message": "管理员已拒绝特权请求",
+                    }
+                )
+
             return Response.success(data={"status": "rejected", "code": code})
 
         @self.router.post("/revoke")

@@ -211,9 +211,7 @@ class AgentSessionService(Singleton):
 
         # 即时生效：在运行时 session 上切换（不重建）
         gateway = AgentGatewayService()
-        runtime = gateway._runtimeSessions.get(sessionId)
-        if runtime is not None:
-            runtime.switchMode(target_mode)
+        gateway.switchMode(sessionId, target_mode)
         return self.getSession(sessionId, userId)
 
     # ── Token 计费 ──
@@ -241,6 +239,17 @@ class AgentSessionService(Singleton):
         from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
         usageDao = AgentTokenUsageDaoOrm()
         return usageDao.getSessionBilling(sessionId, credentialId=credentialId)
+
+    # ── 已读标记 ──
+
+    def markRead(self, sessionId: str, userId: int) -> AgentSessionResponse:
+        """标记 completed_unread 为已读（恢复为 idle）。
+
+        前端在查看会话详情时调用，清除未读状态。
+        """
+        self.getSession(sessionId, userId)  # 验证存在 + 权限
+        self.dao.markRead(sessionId)
+        return self.getSession(sessionId, userId)
 
     @staticmethod
     def _getCredentialId(session) -> int | None:

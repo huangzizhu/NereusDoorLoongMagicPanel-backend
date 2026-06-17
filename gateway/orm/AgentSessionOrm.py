@@ -21,6 +21,7 @@ class AgentSessionOrm(OrmEngine().getBase()):
     summary = Column(Text, nullable=True)
     lastError = Column(Text, nullable=True)
     pendingApproval = Column(Text, nullable=True)
+    pendingChoice = Column(Text, nullable=True)
     createdAt = Column(DateTime, default=datetime.now)
     updatedAt = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     finishedAt = Column(DateTime, nullable=True)

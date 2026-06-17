@@ -14,6 +14,7 @@ _logger = logging.getLogger(__name__)
 _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "agent_sessions": [
         ("mcpServers", "mcpServers TEXT"),
+        ("pendingChoice", "pendingChoice TEXT"),
     ],
 }
 

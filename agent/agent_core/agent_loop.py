@@ -110,6 +110,9 @@ class AgentCore:
         self._maxToolCallsPerRound = maxToolCallsPerRound
         self._approvalTimeout = approvalTimeout
         self._mode = mode
+        # ── 后台超时控制（S6：WS 解耦后 Agent 在后台独立运行）──
+        self._maxBackgroundTime: float = 1800.0   # 30 分钟最大后台运行时间
+        self._startTime: float | None = None
         self._pendingApprovals: dict[str, asyncio.Event] = {}
         self._approvalDecisions: dict[str, dict] = {}
         self._recorder: "TraceRecorder | None" = None
@@ -288,8 +291,28 @@ class AgentCore:
         roundCount = 0
         response: LLMResponse | None = None
 
+        # ── 后台超时计时起点 ──
+        import time as _time
+        self._startTime = _time.time()
+
         while state != LoopState.DONE and self._withinRoundLimit(roundCount):
             roundCount += 1
+
+            # ── 后台超时检查（最大时间 + 最大轮次）──
+            elapsed = _time.time() - (self._startTime or _time.time())
+            if self._maxBackgroundTime > 0 and elapsed > self._maxBackgroundTime:
+                stream.emit(EventType.TEXT_DELTA, {
+                    "content": (
+                        "\n[Agent 运行时间已达上限（"
+                        + str(int(elapsed // 60))
+                        + " 分钟），会话暂停。你可以发送消息继续。]"
+                    ),
+                })
+                self._trace(traceId, sessionId, "background.timeout", {
+                    "elapsed_seconds": elapsed,
+                    "rounds": roundCount,
+                })
+                break
 
             if state == LoopState.THINKING:
                 # 上下文压缩（token 预算保护）
@@ -613,7 +636,9 @@ class AgentCore:
             stream.emit(EventType.TEXT_DELTA,
                         {"content": "\n[达到最大轮次 " + str(self._maxRounds) + "]"})
         self._trace(traceId, sessionId, "session.done",
-                    {"rounds": roundCount})
+                    {"rounds": roundCount,
+                     "elapsed_seconds": int(_time.time() - (self._startTime or 0)),
+                     "background_timeout": getattr(self, '_maxBackgroundTime', 1800)})
         stream.emit(EventType.DONE)
 
     def _withinRoundLimit(self, roundCount: int) -> bool:

@@ -1,3 +1,11 @@
+"""Agent WebSocket Gateway — 事件消费者（S6：WS 解耦版）。
+
+S6 架构变更：
+- Agent 生命周期从 WS 解绑 → 由 BackgroundRunner 管理
+- WS 只负责：提交消息、接收事件流推送、审批/计划/选择题交互
+- WS 断开不再杀死 agent — agent 在后台继续运行
+- 重连时从 EventBuffer 重放积压事件
+"""
 from __future__ import annotations
 
 import asyncio
@@ -9,57 +17,83 @@ from typing import Any
 from fastapi import WebSocket
 
 from agent.agent_router.router import AgentMode
-from agent.integration.session import AgentSession as RuntimeAgentSession
-from agent.shared.types import AgentEvent, EventType
-from agent.llm_providers.factory import createProvider
-from agent.shared.types import AgentConfig
+from agent.shared.types import AgentEvent
 from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.AgentSessionDaoOrm import AgentSessionDaoOrm
 from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
 from gateway.service.AgentLlmProfileService import AgentLlmProfileService
+from gateway.service.AgentBackgroundRunner import BackgroundRunner
+from gateway.service.AgentEventBuffer import AgentEventBuffer
 from gateway.service.elevation_service import ElevationService
-from gateway.utils.llm_utils import get_llm_config
 from pojo.Agent import AgentSessionCreate
 
 _logger = logging.getLogger("ndlmpanel.gateway")
 
 
 class AgentGatewayService(Singleton):
+    """Agent WebSocket 网关服务（WS 解耦版）。
+
+    WS handler 是事件的消费者，不再持有 Agent 生命周期。
+    Agent 在 BackgroundRunner 中独立运行。
+    """
+
     @singletonInit
     def __init__(self):
         self.sessionDao = AgentSessionDaoOrm()
         self.profileService = AgentLlmProfileService()
         self.tokenUsageDao = AgentTokenUsageDaoOrm()
-        self._runtimeSessions: dict[str, RuntimeAgentSession] = {}
-        self._turnTasks: dict[str, asyncio.Task] = {}
+
+        # ── S6：后台执行器（替代旧的 _runtimeSessions / _turnTasks）──
+        self._runner = BackgroundRunner(
+            self.sessionDao, self.profileService, self.tokenUsageDao,
+        )
+
+        # WS 连接追踪
         self._sendLocks: dict[str, asyncio.Lock] = {}
         self._activeConns: dict[str, tuple[WebSocket, asyncio.Lock]] = {}
+        # 事件流任务追踪（sessionId → asyncio.Task）
+        self._streamTasks: dict[str, asyncio.Task] = {}
+        # ── 每 session 已推送的最大 _seq，用于重连时跳过已看事件 ──
+        self._lastPushedSeq: dict[str, int] = {}
+
+    # ── 公开 API（供 AgentSessionService 等外部调用）──
 
     def invalidateRuntime(self, sessionId: str) -> None:
-        """使缓存的 RuntimeSession 失效，下次 _getRuntimeSession 将重建。"""
-        runtime = self._runtimeSessions.pop(sessionId, None)
-        if runtime is not None:
-            runtime.close()
-        task = self._turnTasks.pop(sessionId, None)
-        if task is not None and not task.done():
-            task.cancel()
-        self._sendLocks.pop(sessionId, None)
+        """使缓存的 RuntimeSession 失效（如切换 toolSource/model 后调用）。
+
+        S6：委托给 BackgroundRunner.cleanSession()。
+        """
+        self._runner.cleanSession(sessionId)
 
     def switchToolSource(self, sessionId: str, toolSource: str,
                          mcpServers: list[dict] | None = None) -> None:
         """切换工具来源并重建 runtime。"""
-        self.invalidateRuntime(sessionId)
-        # 数据库中的 toolSource / mcpServers 由调用者更新
+        self._runner.cleanSession(sessionId)
+
+    def switchMode(self, sessionId: str, mode: AgentMode) -> bool:
+        """切换 Agent 运行模式（即时生效）。"""
+        return self._runner.switchMode(sessionId, mode)
+
+    # ── WebSocket Handler ──
 
     async def handleWebSocket(self, websocket: WebSocket, userId: int,
                               sessionId: str | None = None) -> None:
+        """处理 WebSocket 连接（S6：WS 解耦版）。
+
+        WS 生命周期与 Agent 生命周期解耦：
+        - 连接时：从 EventBuffer 重放积压事件
+        - 消息循环：通过 BackgroundRunner 提交 / 审批 / 选择
+        - 断开时：只清理 WS 资源，不杀 agent
+        """
         created = False
         if sessionId:
             session = self.sessionDao.getSession(sessionId, userId)
             if session is None:
-                await websocket.send_json(self._serverEvent("error", sessionId, None, {
-                    "message": f"不存在 sessionId 为 {sessionId} 的 Agent 会话",
-                }))
+                await websocket.send_json(self._serverEvent(
+                    "error", sessionId, None, {
+                        "message": f"不存在 sessionId 为 {sessionId} 的 Agent 会话",
+                    },
+                ))
                 return
         else:
             defaultProfile = self.profileService.getDefaultProfile()
@@ -78,17 +112,64 @@ class AgentGatewayService(Singleton):
         assert sessionId is not None
         sendLock = self._sendLocks.setdefault(sessionId, asyncio.Lock())
         self._activeConns[sessionId] = (websocket, sendLock)
+
+        # ── S6：检查 agent 运行状态 ──
+        agentRunning = self._runner.isRunning(sessionId)
+        agentStatus = self.sessionDao.getSessionStatus(sessionId) or "idle"
+
+        # ── 发送就绪事件（含运行状态）──
         await self._send(websocket, sendLock, self._serverEvent(
-            "agent.ready", sessionId, None, {"sessionId": sessionId}
+            "agent.ready", sessionId, None, {
+                "sessionId": sessionId,
+                "agentRunning": agentRunning,
+                "status": agentStatus,
+            },
         ))
         if created:
             await self._send(websocket, sendLock, self._serverEvent(
-                "session.created", sessionId, None, {"sessionId": sessionId}
+                "session.created", sessionId, None, {"sessionId": sessionId},
             ))
 
-        # ── WS 重连恢复：检测待审批事件 ──
-        # 如果上次 WS 断开时有残留的 APPROVAL_REQUIRED，
-        # 重新推送给前端让审批弹窗恢复
+        # ── S6：重连恢复 — 从 EventBuffer 重放积压事件 ──
+        buffer = self._runner.getBuffer(sessionId)
+        if buffer:
+            state = await buffer.getState()
+            # ── 游标：只重放 _seq > lastPushedSeq 的事件（跳过已看过的）──
+            lastSeq = self._lastPushedSeq.get(sessionId, -1)
+            backlog = await buffer.readSince(lastSeq)
+
+            # ── 积压去重：多个 approval.required / choice.required 只保留最后一个 ──
+            lastApprovalRequiredIdx: int = -1
+            lastChoiceRequiredIdx: int = -1
+            for i, event in enumerate(backlog):
+                if event.get("type") == "approval.required":
+                    lastApprovalRequiredIdx = i
+                if event.get("type") == "choice.required":
+                    lastChoiceRequiredIdx = i
+
+            for i, event in enumerate(backlog):
+                if (event.get("type") == "approval.required"
+                        and i != lastApprovalRequiredIdx):
+                    continue
+                if (event.get("type") == "choice.required"
+                        and i != lastChoiceRequiredIdx):
+                    continue
+                await self._send(websocket, sendLock, event)
+                # ── 更新游标 ──
+                seq = event.get("_seq", 0)
+                if seq > self._lastPushedSeq.get(sessionId, -1):
+                    self._lastPushedSeq[sessionId] = seq
+
+            # 如果 agent 已跑完 → 告知前端当前状态
+            if state["done"]:
+                if state.get("finalStatus") == "idle":
+                    await self._send(websocket, sendLock, self._serverEvent(
+                        "agent.ready", sessionId, None,
+                        {"sessionId": sessionId, "status": "idle"},
+                    ))
+
+        # ── 审批恢复：检测 DB 中残留的待审批事件 ──
+        # （兼容旧架构残留 + agent 超时后的情况）
         pending_approval = self.sessionDao.getPendingApproval(sessionId)
         if pending_approval:
             _logger.info(
@@ -99,155 +180,144 @@ class AgentGatewayService(Singleton):
                 "approval.resume", sessionId, None, {
                     "message": "检测到上次断连时有待审批操作，请确认是否继续",
                     "approval": pending_approval,
-                }
+                },
             ))
 
+        # ── 选择题恢复：检测 DB 中残留的待回复选择题 ──
+        pending_choice = self.sessionDao.getPendingChoice(sessionId)
+        if pending_choice:
+            _logger.info(
+                "WS 重连检测到待回复选择题: session=%s question=%s",
+                sessionId, pending_choice.get("question", "")[:50],
+            )
+            await self._send(websocket, sendLock, self._serverEvent(
+                "choice.resume", sessionId, None, {
+                    "message": "检测到上次断连时有待回复选择题，请继续回答",
+                    "choice": pending_choice,
+                },
+            ))
+
+        # ── 消息处理循环 ──
         try:
             while True:
                 payload = await websocket.receive_json()
                 msgType = payload.get("type")
 
                 if msgType == "ping":
+                    # ── S6：pong 返回 agent 运行状态 ──
                     await self._send(websocket, sendLock, self._serverEvent(
-                        "pong", sessionId, None, {}
+                        "pong", sessionId, None, {
+                            "agentRunning": self._runner.isRunning(sessionId),
+                            "status": self.sessionDao.getSessionStatus(sessionId) or "idle",
+                        },
                     ))
+
                 elif msgType == "user_message":
                     message = str(payload.get("message") or "")
                     if not message.strip():
                         await self._send(websocket, sendLock, self._serverEvent(
-                            "error", sessionId, None, {"message": "message 不能为空"}
+                            "error", sessionId, None,
+                            {"message": "message 不能为空"},
                         ))
                         continue
-                    if self._isRunning(sessionId):
+
+                    # ── S6：通过 BackgroundRunner 提交（不再直接 _runTurn）──
+                    if self._runner.isRunning(sessionId):
+                        # 已有 agent 在跑 → 消息排队
+                        buffer = await self._runner.submit(
+                            userId, sessionId, message,
+                        )
                         await self._send(websocket, sendLock, self._serverEvent(
-                            "agent.busy", sessionId, None, {"message": "当前会话已有运行中的任务"}
+                            "agent.queued", sessionId, None, {
+                                "message": "Agent 正在执行上一轮任务，"
+                                           "新消息已排队，完成后自动处理",
+                            },
                         ))
-                        continue
-                    task = asyncio.create_task(
-                        self._runTurn(websocket, sendLock, userId, sessionId, message)
-                    )
-                    self._turnTasks[sessionId] = task
+                    else:
+                        buffer = await self._runner.submit(
+                            userId, sessionId, message,
+                        )
+                        # 启动事件流任务：从 buffer 实时消费事件推送 WS
+                        task = asyncio.create_task(
+                            self._streamEvents(
+                                websocket, sendLock, sessionId, buffer,
+                            )
+                        )
+                        self._streamTasks[sessionId] = task
+
                 elif msgType == "approval":
                     actionId = str(payload.get("actionId") or "")
                     approved = bool(payload.get("approved"))
                     reason = str(payload.get("reason") or "")
-                    runtime = self._runtimeSessions.get(sessionId)
+
+                    # ── S6：通过 BackgroundRunner 处理审批 ──
                     ok = False
-                    if runtime is not None and actionId:
-                        ok = runtime.approve(actionId) if approved else runtime.reject(actionId, reason)
-                    # ── WS 重连后审批恢复路径 ──
-                    # runtime 已销毁（WS 断连导致），但 DB 中还有 pendingApproval
+                    if approved:
+                        ok = self._runner.approve(sessionId, actionId)
+                    else:
+                        ok = self._runner.reject(sessionId, actionId, reason)
+
+                    # ── 回退路径：runtime 不存在但 DB 有残留 ──
                     if not ok and actionId:
-                        pending = self.sessionDao.getPendingApproval(sessionId)
-                        if pending and pending.get("action_id") == actionId:
-                            tool_name = pending.get("tool_name", "")
-                            tool_args = pending.get("arguments", {})
-                            _logger.info(
-                                "WS 重连审批恢复: session=%s action=%s tool=%s approved=%s",
-                                sessionId, actionId, tool_name, approved,
-                            )
-
-                            # 重建 runtime 并实际执行工具
-                            execution_ok = False
-                            execution_output = ""
-                            if approved:
-                                try:
-                                    session_obj = self.sessionDao.getSession(
-                                        sessionId, userId
-                                    )
-                                    if session_obj is not None:
-                                        exec_runtime = self._getRuntimeSession(
-                                            session_obj
-                                        )
-                                        execution_output = (
-                                            await exec_runtime._core._executeTool(
-                                                tool_name, tool_args
-                                            )
-                                        )
-                                        execution_ok = True
-                                except Exception as exc:
-                                    execution_output = str(exc)
-                                    execution_ok = False
-                            else:
-                                execution_output = f"[用户拒绝] 工具 {tool_name} 未执行。原因: {reason}"
-
-                            # 写入 tool 结果到 DB
-                            self.sessionDao.addMessage(
-                                sessionId, "tool",
-                                content=str(execution_output)[:2000],
-                                roundIndex=self.sessionDao.getNextRoundIndex(sessionId),
-                                toolCallId=pending.get("call_id", actionId),
-                                metadata={"tool_name": tool_name},
-                            )
-
-                            # 清除 pending
-                            self.sessionDao.clearPendingApproval(sessionId)
-                            self.sessionDao.updateStatus(sessionId, "idle")
-                            # 清理 runtime（下次 submit 时重建）
-                            self.invalidateRuntime(sessionId)
-
-                            # 发送 approval 和 tool result 事件
-                            await self._send(websocket, sendLock, self._serverEvent(
-                                "approval.resolved", sessionId, None, {
-                                    "action_id": actionId,
-                                    "approved": approved,
-                                    "reason": reason,
-                                }
-                            ))
-                            await self._send(websocket, sendLock, self._serverEvent(
-                                "tool.result", sessionId, None, {
-                                    "call_id": pending.get("call_id", actionId),
-                                    "tool_name": tool_name,
-                                    "success": execution_ok,
-                                    "output": str(execution_output)[:2000],
-                                }
-                            ))
-
-                            # ── 继续 AgentCore 循环 ──
-                            # tool result 已写入 DB，历史完整
-                            # _runTurn 会: 新建干净 runner → 从 DB 拉上下文
-                            # → LLM 看到完整的 tool 链 → 自然继续
-                            if approved and execution_ok:
-                                # invalidateRuntime 已清理旧 runtime
-                                cont_task = asyncio.create_task(
-                                    self._runTurn(
-                                        websocket, sendLock,
-                                        userId, sessionId, "",
-                                    )
-                                )
-                                self._turnTasks[sessionId] = cont_task
-                            else:
-                                await self._send(websocket, sendLock, self._serverEvent(
-                                    "done", sessionId, None, {}
-                                ))
-                            ok = True
+                        ok = await self._handleApprovalResume(
+                            websocket, sendLock, userId, sessionId,
+                            actionId, approved, reason,
+                        )
                     if not ok:
                         await self._send(websocket, sendLock, self._serverEvent(
-                            "error", sessionId, None, {"message": "审批动作不存在或已处理"}
+                            "error", sessionId, None,
+                            {"message": "审批动作不存在或已处理"},
                         ))
+
+                    # ── 无论成功/失败，确保 _streamEvents 在消费 ──
+                    # （agent 可能仍在跑，后续事件不能丢）
+                    await self._ensureStreamEvents(
+                        websocket, sendLock, sessionId,
+                    )
+
                 elif msgType == "plan":
                     approved = bool(payload.get("approved"))
                     reason = str(payload.get("reason") or "")
-                    runtime = self._runtimeSessions.get(sessionId)
                     ok = False
-                    if runtime is not None:
-                        ok = runtime.approvePlan() if approved else runtime.rejectPlan(reason)
+                    if approved:
+                        ok = self._runner.approvePlan(sessionId)
+                    else:
+                        ok = self._runner.rejectPlan(sessionId, reason)
                     if not ok:
                         await self._send(websocket, sendLock, self._serverEvent(
-                            "error", sessionId, None, {"message": "无待审批的计划或计划已处理"}
+                            "error", sessionId, None,
+                            {"message": "无待审批的计划或计划已处理"},
                         ))
+                    elif ok:
+                        await self._ensureStreamEvents(
+                            websocket, sendLock, sessionId,
+                        )
+
                 elif msgType == "choice":
                     actionId = str(payload.get("actionId") or "")
                     selectionId = str(payload.get("selectionId") or "")
                     customInput = str(payload.get("customInput") or "")
-                    runtime = self._runtimeSessions.get(sessionId)
-                    ok = False
-                    if runtime is not None:
-                        ok = runtime.resolveChoice(actionId, selectionId, customInput)
+                    ok = self._runner.resolveChoice(
+                        sessionId, actionId, selectionId, customInput,
+                    )
+
+                    # ── 回退路径：runtime 不存在但 DB 有残留 ──
+                    if not ok and actionId:
+                        ok = await self._handleChoiceResume(
+                            websocket, sendLock, sessionId,
+                            actionId, selectionId, customInput,
+                        )
+
                     if not ok:
                         await self._send(websocket, sendLock, self._serverEvent(
-                            "error", sessionId, None, {"message": "无待回复的选择题或已处理"}
+                            "error", sessionId, None,
+                            {"message": "无待回复的选择题或已处理"},
                         ))
+                    elif ok:
+                        await self._ensureStreamEvents(
+                            websocket, sendLock, sessionId,
+                        )
+
                 elif msgType == "switch_mode":
                     mode_str = str(payload.get("mode") or "")
                     try:
@@ -255,475 +325,316 @@ class AgentGatewayService(Singleton):
                     except ValueError:
                         await self._send(websocket, sendLock, self._serverEvent(
                             "error", sessionId, None,
-                            {"message": f"不支持的模式: {mode_str}"}
+                            {"message": f"不支持的模式: {mode_str}"},
                         ))
                         continue
 
-                    # 1. 持久化到 DB（不管 runtime 是否存在都要写）
                     self.sessionDao.updateMode(sessionId, target_mode.value)
 
-                    # 2. 如果运行时 session 存在 → 即时生效
-                    runtime = self._runtimeSessions.get(sessionId)
-                    if runtime is not None:
-                        runtime.switchMode(target_mode)
+                    if self._runner.switchMode(sessionId, target_mode):
                         await self._send(websocket, sendLock, self._serverEvent(
                             "mode_changed", sessionId, None,
-                            {"mode": target_mode.value}
+                            {"mode": target_mode.value},
                         ))
                     else:
-                        # 运行时不存在 → 告知用户下次会话生效
                         await self._send(websocket, sendLock, self._serverEvent(
                             "mode_changed", sessionId, None,
                             {"mode": target_mode.value,
-                             "effective": "next_turn"}
+                             "effective": "next_turn"},
                         ))
+
                 elif msgType == "cancel":
-                    await self._cancelTurn(sessionId)
+                    await self._runner.cancel(sessionId)
                     self.sessionDao.updateStatus(sessionId, "idle")
                     self.sessionDao.clearPendingApproval(sessionId)
+                    # 取消事件流任务
+                    task = self._streamTasks.pop(sessionId, None)
+                    if task and not task.done():
+                        task.cancel()
                     await self._send(websocket, sendLock, self._serverEvent(
-                        "done", sessionId, None, {"reason": "cancelled"}
+                        "done", sessionId, None, {"reason": "cancelled"},
                     ))
+
                 else:
                     await self._send(websocket, sendLock, self._serverEvent(
-                        "error", sessionId, None, {"message": f"不支持的 Agent 消息类型: {msgType}"}
+                        "error", sessionId, None,
+                        {"message": f"不支持的 Agent 消息类型: {msgType}"},
                     ))
+
         finally:
-            await self._cancelTurn(sessionId)
+            # ── S6：WS 断开只清理 WS 资源，不杀 agent ──
+            streamTask = self._streamTasks.pop(sessionId, None)
+            if streamTask and not streamTask.done():
+                streamTask.cancel()
 
-    async def _runTurn(self, websocket: WebSocket, sendLock: asyncio.Lock,
-                       userId: int, sessionId: str, message: str) -> None:
-        runtime: RuntimeAgentSession | None = None
-        traceId: str | None = None
-        doneSent = False
-        assistantParts: list[str] = []
-        roundIndex = self.sessionDao.getNextRoundIndex(sessionId)
-        userMessageId = self.sessionDao.addMessage(
-            sessionId, "user", message, roundIndex=roundIndex
-        )
-        userTraceUpdated = False
-        # 跟踪本轮 tool_calls 和 tool 结果以持久化
-        currentTcBlock: list[dict] | None = None  # 当前轮次的 tool_calls 块
-        toolResultsThisRound: list[dict] = []     # 当前轮次的 tool 结果
-        usageThisRound: dict = {}
+            # 移除活跃连接记录
+            self._activeConns.pop(sessionId, None)
 
-        try:
-            session = self.sessionDao.getSession(sessionId, userId)
-            if session is None:
-                raise RuntimeError(f"session {sessionId} 不存在")
-            self.sessionDao.updateStatus(sessionId, "running")
-            runtime = self._getRuntimeSession(session)
-            history = self.sessionDao.getRecentConversationHistory(sessionId)
-            if history and history[-1]["role"] == "user" and history[-1]["content"] == message:
-                history = history[:-1]
-
-            async for event in runtime.submit(message, conversationHistory=history):
-                traceId = traceId or event.trace_id
-                if traceId and not userTraceUpdated:
-                    self.sessionDao.updateMessageTrace(userMessageId, traceId)
-                    userTraceUpdated = True
-
-                eventType = event.type.value if hasattr(event.type, "value") else str(event.type)
-
-                if event.type == EventType.TEXT_DELTA:
-                    assistantParts.append(str(event.data.get("content", "")))
-
-                elif event.type == EventType.TOOL_CALLING:
-                    # 持久化：assistant 带 tool_calls 的消息
-                    currentTcBlock = event.data.get("tool_calls", [])
-                    usageThisRound = event.data.get("usage", {})
-                    if currentTcBlock:
-                        self.sessionDao.addMessage(
-                            sessionId, "assistant", content=None,
-                            traceId=traceId, roundIndex=roundIndex,
-                            metadata={"tool_calls": currentTcBlock},
-                        )
-
-                elif event.type == EventType.TOOL_RESULT:
-                    # 持久化：tool 消息
-                    tcData = event.data
-                    toolResultsThisRound.append({
-                        "call_id": tcData.get("call_id", ""),
-                        "tool_name": tcData.get("tool_name", ""),
-                        "output": tcData.get("output", ""),
-                        "success": tcData.get("success", False),
-                    })
-                    self.sessionDao.addMessage(
-                        sessionId, "tool",
-                        content=str(tcData.get("output", "")),
-                        traceId=traceId, roundIndex=roundIndex,
-                        toolCallId=tcData.get("call_id", ""),
-                        metadata={"tool_name": tcData.get("tool_name", "")},
-                    )
-
-                    # ── 特权提权事件检测 ──
-                    tool_name = tcData.get("tool_name", "")
-                    if tool_name == "submitElevation" and tcData.get("success"):
-                        await self._handleElevationResult(sessionId, websocket, sendLock, tcData)
-                    elif tool_name == "runPrivileged":
-                        await self._send(websocket, sendLock, self._serverEvent(
-                            "elevation.resolved", sessionId, tcData.get("trace_id"), {
-                                "status": "approved" if tcData.get("success") else "failed",
-                                "message": "特权命令已执行" if tcData.get("success") else "特权执行失败",
-                            }
-                        ))
-
-                elif event.type == EventType.APPROVAL_REQUIRED:
-                    self.sessionDao.updateStatus(sessionId, "waiting_approval")
-                    # 持久化审批事件数据（WS 重连时恢复用）
-                    self.sessionDao.updatePendingApproval(sessionId, {
-                        "action_id": event.data.get("action_id", ""),
-                        "tool_name": event.data.get("tool_name", ""),
-                        "arguments": event.data.get("arguments", {}),
-                        "reason": event.data.get("reason", ""),
-                        "ai_reason": event.data.get("ai_reason", ""),
-                        "call_id": event.data.get("call_id", ""),
-                    })
-                elif event.type == EventType.APPROVAL_RESOLVED:
-                    self.sessionDao.updateStatus(sessionId, "running")
-                    self.sessionDao.clearPendingApproval(sessionId)
-                elif event.type == EventType.ERROR:
+            # 无人连接 + agent 不在运行 → 标记 completed_unread
+            if (self._countWsConnections(sessionId) == 0
+                    and not self._runner.isRunning(sessionId)):
+                session_status = self.sessionDao.getSessionStatus(sessionId)
+                if session_status == "idle":
                     self.sessionDao.updateStatus(
-                        sessionId, "error", lastError=str(event.data.get("message", ""))
+                        sessionId, "completed_unread",
                     )
-                    self.sessionDao.clearPendingApproval(sessionId)
-                elif event.type == EventType.CHOICE_REQUIRED:
-                    self.sessionDao.updateStatus(sessionId, "waiting_choice")
-                elif event.type == EventType.CHOICE_RESOLVED:
-                    self.sessionDao.updateStatus(sessionId, "running")
-                elif event.type == EventType.PLAN_PROPOSED:
-                    self.sessionDao.updateStatus(sessionId, "waiting_plan")
-                elif event.type == EventType.PLAN_APPROVED:
-                    # 计划批准 → 模式已切换为 AGENT
-                    self.sessionDao.updateMode(sessionId, "agent")
-                    self.sessionDao.updateStatus(sessionId, "running")
-                    # 更新 DB 中 tool 消息的内容
-                    call_id = str(event.data.get("call_id", ""))
-                    tool_response = str(event.data.get("tool_response", ""))
-                    if call_id:
-                        self.sessionDao.updateToolResponse(
-                            sessionId, call_id, tool_response,
-                        )
-                    await self._send(websocket, sendLock, self._serverEvent(
-                        "mode_changed", sessionId, traceId,
-                        {"mode": "agent"}
-                    ))
-                elif event.type == EventType.PLAN_REJECTED:
-                    self.sessionDao.updateStatus(sessionId, "running")
-                    reason = str(event.data.get("reason", ""))
-                    call_id = str(event.data.get("call_id", ""))
-                    # 更新 DB 中 tool 消息的内容
-                    if call_id:
-                        new_content = f"[计划被拒绝] {reason}" if reason else "[计划被拒绝]"
-                        self.sessionDao.updateToolResponse(
-                            sessionId, call_id, new_content,
-                        )
-                    # 超时拒绝 → 模式已回退到 AGENT
-                    if "超时" in reason:
-                        self.sessionDao.updateMode(sessionId, "agent")
-                        await self._send(websocket, sendLock, self._serverEvent(
-                            "mode_changed", sessionId, traceId,
-                            {"mode": "agent", "reason": reason}
-                        ))
-                elif event.type == EventType.TEXT_DONE:
-                    # 纯文本回复完成时捕获 usage（有 tool_calls 时在 TOOL_CALLING 中已捕获）
-                    if not usageThisRound:
-                        usageThisRound = event.data.get("usage", {})
-                elif event.type == EventType.DONE:
-                    doneSent = True
-                    self.sessionDao.clearPendingApproval(sessionId)
 
-                await self._send(websocket, sendLock, self._formatAgentEvent(event))
+    # ── 事件流推送 ──
 
-            # ── 持久化 final assistant 文本 ──
-            finalText = "".join(assistantParts).strip()
-            if finalText:
-                self.sessionDao.addMessage(
-                    sessionId, "assistant", finalText,
-                    traceId=traceId, roundIndex=roundIndex,
-                )
+    async def _streamEvents(
+        self, websocket: WebSocket, sendLock: asyncio.Lock,
+        sessionId: str, buffer: AgentEventBuffer,
+    ) -> None:
+        """从 EventBuffer 持续推送事件到 WS。
 
-            # ── 记录 token 用量 ──
-            await self._recordTokenUsage(sessionId, traceId, session, usageThisRound)
-
-            # ── 首轮自动生成标题（更新会话标题） ──
-            if roundIndex == 1 and session and session.title in ("新 Agent 会话", "新会话", ""):
-                asyncio.create_task(
-                    self._autoGenerateTitle(sessionId, message, finalText, session)
-                )
-
-            self.sessionDao.updateStatus(sessionId, "idle")
-            if not doneSent:
-                await self._send(websocket, sendLock, self._serverEvent(
-                    "done", sessionId, traceId, {}
-                ))
-        except asyncio.CancelledError:
-            self.sessionDao.updateStatus(sessionId, "idle")
-            # 注意：不断连时不清除 pendingApproval
-            # WS 断连后 pendingApproval 仍然保留，重连时通过 approval.resume 恢复
-            raise
-        except Exception as exc:
-            self.sessionDao.updateStatus(sessionId, "error", lastError=str(exc))
-            self.sessionDao.clearPendingApproval(sessionId)
-            await self._send(websocket, sendLock, self._serverEvent(
-                "error", sessionId, traceId, {"message": str(exc)}
-            ))
-        finally:
-            storedRuntime = self._runtimeSessions.get(sessionId)
-            if runtime is not None and storedRuntime is runtime:
-                self._runtimeSessions.pop(sessionId, None)
-                runtime.close()
-            current = self._turnTasks.get(sessionId)
-            if current is asyncio.current_task():
-                self._turnTasks.pop(sessionId, None)
-
-    async def _recordTokenUsage(self, sessionId: str, traceId: str | None,
-                                 session, usage: dict) -> None:
-        """记录本轮 LLM 调用的 token 用量（含缓存命中统计）。"""
-        if not usage:
-            return
-        inputTokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
-        outputTokens = usage.get("completion_tokens") or usage.get("output_tokens") or 0
-        if not inputTokens and not outputTokens:
-            return
-        # 提取缓存命中 tokens（DeepSeek / OpenAI 兼容格式）
-        cachedInputTokens = (
-            usage.get("prompt_cache_hit_tokens")
-            or usage.get("prompt_tokens_details", {}).get("cached_tokens")
-            or 0
-        )
-        # 获取模型名
-        model = "unknown"
-        try:
-            profile = self.profileService.dao.getProfileById(session.profileId) if session.profileId else None
-            if profile:
-                model = profile.model
-        except Exception:
-            pass
-        self.tokenUsageDao.recordUsage(
-            sessionId=sessionId,
-            model=model,
-            inputTokens=int(inputTokens),
-            outputTokens=int(outputTokens),
-            cachedInputTokens=int(cachedInputTokens),
-            traceId=traceId,
-        )
-
-    async def _autoGenerateTitle(self, sessionId: str, userMsg: str,
-                                  response: str, session) -> None:
-        """首轮对话后异步生成标题。
-
-        重要：不调 normalize_endpoint() — createProvider 靠检测 endpoint
-        中是否含 "/anthropic" 来自动选择 AnthropicProvider / OpenAIProvider。
-        归一化会移除该标记导致 Provider 选错 + 路径重复（404）。
+        每 100ms 轮询一次 buffer 的实时队列。
+        直到 agent 完成（buffer.done）或 WS 断开。
         """
         try:
-            # ── 1. 获取 LLM 配置 ──
-            llm_cfg = get_llm_config(session)
-            endpoint = llm_cfg.get("endpoint", "")
-            api_key = llm_cfg.get("api_key", "")
-            model = llm_cfg.get("model", "deepseek-chat")
+            while True:
+                state = await buffer.getState()
 
-            if not endpoint or not api_key:
-                _logger.warning(
-                    "自动标题生成: LLM 配置不完整, 使用 fallback。"
-                    "endpoint=%s api_key=%s", bool(endpoint), bool(api_key),
-                )
-                self._titleFallback(sessionId, userMsg)
-                return
+                # 从实时队列消费事件
+                queue = await buffer.getQueue()
+                try:
+                    while True:
+                        event = queue.get_nowait()
+                        # ── 去重：跳过 backlog 重放已发过的事件 ──
+                        seq = event.get("_seq", 0)
+                        lastKnown = self._lastPushedSeq.get(sessionId, -1)
+                        if seq <= lastKnown:
+                            queue.task_done()
+                            continue
+                        await self._send(websocket, sendLock, event)
+                        queue.task_done()
+                        # ── 更新游标 ──
+                        if seq > lastKnown:
+                            self._lastPushedSeq[sessionId] = seq
 
-            # ── 2. 规整化端点（Provider 兼容）──
-            # 规整规则：
-            #   Anthropic 端点 (.../anthropic) → 不动，createProvider 自动检测
-            #   DeepSeek 官方 (api.deepseek.com) → 裸域名，不用 /v1
-            #   其他 → 加 /v1（OpenAI 标准路径前缀）
-            # OpenAIProvider 内部会追加 /chat/completions，这里只给 BASE URL
-            raw_endpoint = endpoint
-            if "/anthropic" in endpoint:
-                pass  # 让 createProvider 检测 /anthropic → AnthropicProvider
-            elif "api.deepseek.com" in endpoint:
-                # DeepSeek 官方地址: https://api.deepseek.com/chat/completions
-                endpoint = "https://api.deepseek.com"
-            else:
-                endpoint = endpoint.rstrip("/")
-                # 去掉已存在的 /chat/completions（provider 会再加）
-                if endpoint.endswith("/chat/completions"):
-                    endpoint = endpoint[: -len("/chat/completions")]
-                # 确保有 /v1 前缀（其他厂商的 OpenAI 标准路径）
-                if not endpoint.endswith("/v1"):
-                    endpoint = endpoint + "/v1"
+                        # ── 特权提权事件特殊处理 ──
+                        eventType = event.get("type", "")
+                        data = event.get("data", {})
+                        if eventType == "tool.result":
+                            tool_name = data.get("tool_name", "")
+                            try:
+                                if tool_name == "submitElevation" and data.get(
+                                    "success"
+                                ):
+                                    await self._handleElevationResult(
+                                        sessionId, websocket, sendLock, data,
+                                    )
+                                elif tool_name == "runPrivileged":
+                                    await self._send(
+                                        websocket, sendLock,
+                                        self._serverEvent(
+                                            "elevation.resolved", sessionId,
+                                            data.get("trace_id"), {
+                                                "status": (
+                                                    "approved"
+                                                    if data.get("success")
+                                                    else "failed"
+                                                ),
+                                                "message": (
+                                                    "特权命令已执行"
+                                                    if data.get("success")
+                                                    else "特权执行失败"
+                                                ),
+                                            },
+                                        ),
+                                    )
+                            except Exception:
+                                _logger.exception(
+                                    "_streamEvents: 处理特权事件异常 "
+                                    "session=%s tool=%s",
+                                    sessionId, tool_name,
+                                )
 
-            _logger.info(
-                "自动标题生成: raw_endpoint=%s -> normalized=%s model=%s is_anthropic=%s",
-                raw_endpoint[:80], endpoint[:80], model, "/anthropic" in raw_endpoint,
-            )
+                except asyncio.QueueEmpty:
+                    pass
 
-            titleConfig = AgentConfig(
-                llm_endpoint=endpoint,
-                llm_model=model,
-                llm_max_tokens=1000,
-                llm_temperature=0.0,
-                llm_retry_count=1,
-                llm_retry_delay=1.0,
-            )
-            titleConfig.llm_api_key = api_key
+                if state["done"]:
+                    await self._send(websocket, sendLock, self._serverEvent(
+                        "done", sessionId, None, {},
+                    ))
+                    break
 
-            provider = createProvider(titleConfig)
-            _logger.info(
-                "自动标题生成: provider=%s final_endpoint=%s",
-                type(provider).__name__,
-                getattr(provider, '_endpoint', '?'),
-            )
+                await asyncio.sleep(0.1)  # 100ms 轮询间隔
 
-            resp = await provider.chat([
-                {"role": "system",
-                 "content": "根据对话内容生成一个简洁的对话标题（10字~20字以内），只返回标题本身，不要加引号"},
-                {"role": "user", "content": f"用户：{userMsg[:200]}"},
-            ])
-            title = (resp.content or "").strip().strip('"').strip("'")
-            if title and len(title) <= 100:
-                self.sessionDao.updateSessionTitle(sessionId, title)
-                _logger.info(
-                    "自动标题生成成功: session=%s title=%s", sessionId, title,
-                )
-                # ── 推送标题更新事件到前端 ──
-                await self._pushTitleEvent(sessionId, title)
-            else:
-                self._titleFallback(sessionId, userMsg)
-                _logger.info(
-                    "自动标题生成: LLM 返回空标题, 使用 fallback。session=%s",
-                    sessionId,
-                )
+        except asyncio.CancelledError:
+            pass  # WS 断开，正常退出
 
-        except Exception as e:
-            _logger.warning(
-                "自动标题生成失败: %s, 使用 fallback。session=%s", e, sessionId,
-            )
-            self._titleFallback(sessionId, userMsg)
+    # ── 审批恢复路径（兼容旧架构残留）──
 
-    async def _titleFallback(self, sessionId: str, userMsg: str) -> None:
-        """标题生成 fallback：用用户消息前 20 字作为标题。"""
-        fallbackTitle = userMsg[:20].strip()
-        if fallbackTitle:
+    async def _handleApprovalResume(
+        self, websocket: WebSocket, sendLock: asyncio.Lock,
+        userId: int, sessionId: str, actionId: str,
+        approved: bool, reason: str,
+    ) -> bool:
+        """处理 WS 重连后的审批恢复（runtime 不存在但 DB 有残留 pending）。
+
+        S6 中此路径仅在 agent 已超时/崩溃时触发。
+        """
+        pending = self.sessionDao.getPendingApproval(sessionId)
+        if not pending or pending.get("action_id") != actionId:
+            return False
+
+        tool_name = pending.get("tool_name", "")
+        tool_args = pending.get("arguments", {})
+        _logger.info(
+            "WS 重连审批恢复: session=%s action=%s tool=%s approved=%s",
+            sessionId, actionId, tool_name, approved,
+        )
+
+        execution_ok = False
+        execution_output = ""
+        if approved:
             try:
-                self.sessionDao.updateSessionTitle(sessionId, fallbackTitle)
-                _logger.info(
-                    "标题 fallback 成功: session=%s title=%s",
-                    sessionId, fallbackTitle,
-                )
-                await self._pushTitleEvent(sessionId, fallbackTitle)
-            except Exception as e:
-                _logger.warning(
-                    "标题 fallback 写入失败: session=%s error=%s",
-                    sessionId, e,
-                )
+                session_obj = self.sessionDao.getSession(sessionId, userId)
+                if session_obj is not None:
+                    # 临时创建 runtime 执行工具
+                    from agent.agent_router.router import AgentMode
+                    from agent.integration.session import (
+                        AgentSession as RuntimeAgentSession,
+                    )
+                    config = self.profileService.buildAgentConfig(
+                        session_obj.profileId,
+                        safetyPolicy=session_obj.safetyPolicy,
+                    )
+                    try:
+                        mode = AgentMode(session_obj.mode)
+                    except ValueError:
+                        mode = AgentMode.AGENT
+                    exec_runtime = RuntimeAgentSession(
+                        config=config,
+                        userId=str(userId),
+                        sessionId=sessionId,
+                        mode=mode,
+                        toolSource=session_obj.toolSource,
+                        mcpServers=session_obj.mcpServers,
+                    )
+                    execution_output = await exec_runtime._core._executeTool(
+                        tool_name, tool_args,
+                    )
+                    execution_ok = True
+                    exec_runtime.close()
+            except Exception as exc:
+                execution_output = str(exc)
+                execution_ok = False
+        else:
+            execution_output = (
+                f"[用户拒绝] 工具 {tool_name} 未执行。原因: {reason}"
+            )
 
-    async def _pushTitleEvent(self, sessionId: str, title: str) -> None:
-        """向前端推送标题更新事件。"""
-        pair = self._activeConns.get(sessionId)
-        if pair is None:
-            _logger.debug("_pushTitleEvent: session=%s 无活跃 WS 连接", sessionId)
-            return
-        websocket, sendLock = pair
-        try:
+        # 写入 tool 结果到 DB
+        self.sessionDao.addMessage(
+            sessionId, "tool",
+            content=str(execution_output)[:2000],
+            roundIndex=self.sessionDao.getNextRoundIndex(sessionId),
+            toolCallId=pending.get("call_id", actionId),
+            metadata={"tool_name": tool_name},
+        )
+        self.sessionDao.clearPendingApproval(sessionId)
+        self.sessionDao.updateStatus(sessionId, "idle")
+
+        # ── 发送事件 ──
+        await self._send(websocket, sendLock, self._serverEvent(
+            "approval.resolved", sessionId, None, {
+                "action_id": actionId,
+                "approved": approved,
+                "reason": reason,
+            },
+        ))
+        await self._send(websocket, sendLock, self._serverEvent(
+            "tool.result", sessionId, None, {
+                "call_id": pending.get("call_id", actionId),
+                "tool_name": tool_name,
+                "success": execution_ok,
+                "output": str(execution_output)[:2000],
+            },
+        ))
+
+        # ── 批准且执行成功 → 推送 done（此路径无后台 agent 运行）──
+        if approved and execution_ok:
+            # 注意：不调 submit("")，避免空消息触发 agent 异常行为
+            # 用户可手动发下一条消息继续对话
             await self._send(websocket, sendLock, self._serverEvent(
-                "title.updated", sessionId, None, {"title": title},
+                "agent.ready", sessionId, None, {
+                    "sessionId": sessionId,
+                    "agentRunning": False,
+                    "status": "idle",
+                },
             ))
-        except Exception as e:
-            _logger.warning("_pushTitleEvent: session=%s 推送失败: %s", sessionId, e)
+        await self._send(websocket, sendLock, self._serverEvent(
+            "done", sessionId, None, {},
+        ))
 
-    def _getRuntimeSession(self, session) -> RuntimeAgentSession:
-        runtime = self._runtimeSessions.get(session.sessionId)
-        if runtime is not None:
-            return runtime
-        config = self.profileService.buildAgentConfig(
-            session.profileId,
-            safetyPolicy=session.safetyPolicy,
-        )
-        try:
-            mode = AgentMode(session.mode)
-        except ValueError:
-            mode = AgentMode.AGENT
-        runtime = RuntimeAgentSession(
-            config=config,
-            userId=str(session.userId),
-            sessionId=session.sessionId,
-            mode=mode,
-            toolSource=session.toolSource,
-            mcpServers=session.mcpServers,
-        )
-        self._runtimeSessions[session.sessionId] = runtime
-        return runtime
-
-    async def _cancelTurn(self, sessionId: str) -> None:
-        runtime = self._runtimeSessions.pop(sessionId, None)
-        if runtime is not None:
-            runtime.close()
-        task = self._turnTasks.pop(sessionId, None)
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
-
-    def _isRunning(self, sessionId: str) -> bool:
-        task = self._turnTasks.get(sessionId)
-        if task is None:
-            return False
-        if task.done():
-            self._turnTasks.pop(sessionId, None)
-            return False
         return True
 
-    @staticmethod
-    async def _send(websocket: WebSocket, lock: asyncio.Lock,
-                    payload: dict[str, Any]) -> None:
-        async with lock:
-            await websocket.send_json(payload)
+    # ── 选择题恢复路径（兼容 runtime 不存在但 DB 有残留）──
 
-    @staticmethod
-    def _formatAgentEvent(event: AgentEvent) -> dict[str, Any]:
-        eventType = event.type.value if hasattr(event.type, "value") else str(event.type)
-        return {
-            "type": eventType,
-            "sessionId": event.session_id,
-            "traceId": event.trace_id,
-            "timestamp": event.timestamp,
-            "data": event.data,
-        }
+    async def _handleChoiceResume(
+        self, websocket: WebSocket, sendLock: asyncio.Lock,
+        sessionId: str, actionId: str,
+        selectionId: str, customInput: str,
+    ) -> bool:
+        """处理 WS 重连后的选择题恢复（runtime 不存在但 DB 有残留 pending）。
 
-    @staticmethod
-    def _serverEvent(eventType: str, sessionId: str,
-                     traceId: str | None, data: dict[str, Any]) -> dict[str, Any]:
-        import time
-
-        return {
-            "type": eventType,
-            "sessionId": sessionId,
-            "traceId": traceId,
-            "timestamp": time.time(),
-            "data": data,
-        }
-
-    async def pushElevationEvent(self, sessionId: str, eventType: str, data: dict) -> bool:
-        """向指定 session 推送特权提权事件。"""
-        pair = self._activeConns.get(sessionId)
-        if pair is None:
-            _logger.warning("pushElevationEvent: session=%s 无活跃连接", sessionId)
+        S6 中此路径仅在 agent 已超时/崩溃时触发。
+        """
+        pending = self.sessionDao.getPendingChoice(sessionId)
+        if not pending or pending.get("action_id") != actionId:
             return False
-        websocket, sendLock = pair
-        try:
-            await self._send(websocket, sendLock, self._serverEvent(
-                eventType, sessionId, None, data,
-            ))
-            return True
-        except Exception:
-            _logger.exception("pushElevationEvent: session=%s 推送失败", sessionId)
-            self._activeConns.pop(sessionId, None)
-            return False
+
+        _logger.info(
+            "WS 重连选择题恢复: session=%s action=%s selection=%s",
+            sessionId, actionId, selectionId,
+        )
+
+        # 写入选择题结果到 DB
+        result = json.dumps({
+            "selection_id": selectionId,
+            "custom_input": customInput,
+        }, ensure_ascii=False)
+        self.sessionDao.addMessage(
+            sessionId, "tool",
+            content=result[:2000],
+            roundIndex=self.sessionDao.getNextRoundIndex(sessionId),
+            toolCallId=pending.get("call_id", actionId),
+            metadata={"tool_name": "ask_choice"},
+        )
+        self.sessionDao.clearPendingChoice(sessionId)
+        self.sessionDao.updateStatus(sessionId, "idle")
+
+        # ── 发送事件 ──
+        await self._send(websocket, sendLock, self._serverEvent(
+            "choice.resolved", sessionId, None, {
+                "action_id": actionId,
+                "selection_id": selectionId,
+                "custom_input": customInput,
+            },
+        ))
+        await self._send(websocket, sendLock, self._serverEvent(
+            "tool.result", sessionId, None, {
+                "call_id": pending.get("call_id", actionId),
+                "tool_name": "ask_choice",
+                "success": True,
+                "output": result[:2000],
+            },
+        ))
+        await self._send(websocket, sendLock, self._serverEvent(
+            "agent.ready", sessionId, None, {
+                "sessionId": sessionId,
+                "agentRunning": False,
+                "status": "idle",
+            },
+        ))
+        await self._send(websocket, sendLock, self._serverEvent(
+            "done", sessionId, None, {},
+        ))
+
+        return True
+
+    # ── 特权提权事件处理 ──
 
     async def _handleElevationResult(
         self, sessionId: str, websocket: WebSocket,
@@ -734,7 +645,10 @@ class AgentGatewayService(Singleton):
 
         tool_output = tcData.get("output", "")
         try:
-            result_data = json.loads(tool_output) if isinstance(tool_output, str) else {}
+            result_data = (
+                json.loads(tool_output)
+                if isinstance(tool_output, str) else {}
+            )
         except (json.JSONDecodeError, TypeError):
             _logger.warning("_handleElevationResult: 无法解析 tool output")
             return
@@ -746,16 +660,15 @@ class AgentGatewayService(Singleton):
             _logger.warning("_handleElevationResult: 缺少 code 或 commands")
             return
 
-        # 同步到本地 ElevationService（CLI approve 时查找用）
         elevation = ElevationService()
         entry = elevation.get_code(code)
+        # 提取双通道字段（必须在 if entry is None 之前定义，供后续 ws_data 使用）
+        inline_cmd = result_data.get("inline_cmd", "")
+        script_path = result_data.get("script_path", "")
         if entry is None:
-            # 提取双通道字段
-            inline_cmd = result_data.get("inline_cmd", "")
-            script_path = result_data.get("script_path", "")
-
-            # 双通道 hash 计算（runPrivileged / 特权代理校验时使用）
-            from privileged_agent.crypto import hash_payload as _hash_payload
+            from privileged_agent.crypto import (
+                hash_payload as _hash_payload,
+            )
             inline_cmd_hash = (
                 _hash_payload({"cmd": inline_cmd}) if inline_cmd else None
             )
@@ -763,12 +676,15 @@ class AgentGatewayService(Singleton):
             if script_path:
                 try:
                     _script_content = Path(script_path).read_text(
-                        encoding="utf-8", errors="ignore"
+                        encoding="utf-8", errors="ignore",
                     )
-                    script_hash = _hash_payload({"content": _script_content})
+                    script_hash = _hash_payload(
+                        {"content": _script_content},
+                    )
                 except (OSError, FileNotFoundError):
                     _logger.warning(
-                        "script_hash: 无法读取脚本文件 %s，script_hash 将为空",
+                        "script_hash: 无法读取脚本文件 %s，"
+                        "script_hash 将为空",
                         script_path,
                     )
 
@@ -785,29 +701,143 @@ class AgentGatewayService(Singleton):
                 script_hash=script_hash,
             )
             _logger.info(
-                "elevation: code=%s 已同步到 Gateway ElevationService (inline=%s script=%s)",
+                "elevation: code=%s 已同步到 Gateway ElevationService "
+                "(inline=%s script=%s)",
                 code, bool(inline_cmd), bool(script_path),
             )
 
-        # 推送 WS 事件到前端
         ws_data = {
             "code": code,
             "commands": commands,
             "reason": reason,
             "ttl_seconds": result_data.get("ttl_seconds", 3600),
             "max_ops": result_data.get("max_ops", 10),
-            "message": f"Agent 请求特权操作，请在 SSH 执行: sudo nereus approve {code}",
+            "message": (
+                f"Agent 请求特权操作，"
+                f"请在 SSH 执行: sudo nereus approve {code}"
+            ),
         }
         if inline_cmd:
             ws_data["inline_cmd"] = inline_cmd
         if script_path:
             ws_data["script_path"] = script_path
         await self._send(websocket, sendLock, self._serverEvent(
-            "elevation.requested", sessionId, tcData.get("trace_id"), ws_data,
+            "elevation.requested", sessionId,
+            tcData.get("trace_id"), ws_data,
         ))
+
+    # ── 公共推送 API ──
+
+    async def pushElevationEvent(
+        self, sessionId: str, eventType: str, data: dict,
+    ) -> bool:
+        """向指定 session 推送特权提权事件。"""
+        pair = self._activeConns.get(sessionId)
+        if pair is None:
+            _logger.warning(
+                "pushElevationEvent: session=%s 无活跃连接", sessionId,
+            )
+            return False
+        websocket, sendLock = pair
+        try:
+            await self._send(websocket, sendLock, self._serverEvent(
+                eventType, sessionId, None, data,
+            ))
+            return True
+        except Exception:
+            _logger.exception(
+                "pushElevationEvent: session=%s 推送失败", sessionId,
+            )
+            self._activeConns.pop(sessionId, None)
+            return False
+
+    async def _pushTitleEvent(self, sessionId: str, title: str) -> None:
+        """向前端推送标题更新事件。
+
+        S6 保留：BackgroundRunner 也会推送 title.updated 到 buffer，
+        此方法作为补充（直接推送，无需等待 buffer 轮询）。
+        """
+        pair = self._activeConns.get(sessionId)
+        if pair is None:
+            return
+        websocket, sendLock = pair
+        try:
+            await self._send(websocket, sendLock, self._serverEvent(
+                "title.updated", sessionId, None, {"title": title},
+            ))
+        except Exception as e:
+            _logger.warning(
+                "_pushTitleEvent: session=%s 推送失败: %s", sessionId, e,
+            )
+
+    # ── 事件流保活 ──
+
+    async def _ensureStreamEvents(
+        self, websocket: WebSocket, sendLock: asyncio.Lock,
+        sessionId: str,
+    ) -> None:
+        """确保 _streamEvents 在运行（审批/计划/选择题成功后调用）。
+
+        如果已有活跃的 stream task → no-op。
+        如果没有 → 创建新的，订阅当前 buffer。
+        """
+        existing = self._streamTasks.get(sessionId)
+        if existing and not existing.done():
+            return  # 已在运行
+
+        buffer = self._runner.getBuffer(sessionId)
+        if buffer is None:
+            return
+
+        task = asyncio.create_task(
+            self._streamEvents(websocket, sendLock, sessionId, buffer),
+        )
+        self._streamTasks[sessionId] = task
+
+    # ── WS 连接计数 ──
+
+    def _countWsConnections(self, sessionId: str) -> int:
+        """统计指定 session 的活跃 WS 连接数。"""
+        return 1 if sessionId in self._activeConns else 0
+
+    # ── 静态工具方法 ──
+
+    @staticmethod
+    async def _send(websocket: WebSocket, lock: asyncio.Lock,
+                    payload: dict[str, Any]) -> None:
+        async with lock:
+            await websocket.send_json(payload)
+
+    @staticmethod
+    def _formatAgentEvent(event: AgentEvent) -> dict[str, Any]:
+        eventType = (
+            event.type.value
+            if hasattr(event.type, "value")
+            else str(event.type)
+        )
+        return {
+            "type": eventType,
+            "sessionId": event.session_id,
+            "traceId": event.trace_id,
+            "timestamp": event.timestamp,
+            "data": event.data,
+        }
+
+    @staticmethod
+    def _serverEvent(eventType: str, sessionId: str,
+                     traceId: str | None,
+                     data: dict[str, Any]) -> dict[str, Any]:
+        import time
+
+        return {
+            "type": eventType,
+            "sessionId": sessionId,
+            "traceId": traceId,
+            "timestamp": time.time(),
+            "data": data,
+        }
 
     @staticmethod
     def _newSessionId() -> str:
         from agent.shared.id_gen import gen_session_id
-
         return gen_session_id()

@@ -103,6 +103,14 @@ class AgentController(AbstractController):
             userId = self._getRequestUserId(request)
             return Response.success(self.sessionService.getSessionBilling(sessionId, userId))
 
+        @self.router.put("/sessions/{sessionId}/mark-read")
+        def markSessionRead(request: Request, sessionId: str):
+            """标记 completed_unread 为已读，恢复 idle 状态。"""
+            userId = self._getRequestUserId(request)
+            return Response.success(
+                self.sessionService.markRead(sessionId, userId)
+            )
+
         @self.router.put("/sessions/{sessionId}/tool-source")
         def switchAgentToolSource(request: Request, sessionId: str,
                                    body: AgentToolSourceSwitch):
