@@ -210,3 +210,5 @@ class AgentController(AbstractController):
                     await websocket.send_json({"type": "error", "data": {"message": "Agent WebSocket 处理失败"}})
                 except Exception:
                     pass
+            finally:
+                self.gatewayService._activeConns.pop(sessionId, None)

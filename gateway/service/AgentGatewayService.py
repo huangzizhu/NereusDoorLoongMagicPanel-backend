@@ -17,6 +17,7 @@ from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.AgentSessionDaoOrm import AgentSessionDaoOrm
 from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
 from gateway.service.AgentLlmProfileService import AgentLlmProfileService
+from gateway.service.elevation_service import ElevationService
 from pojo.Agent import AgentSessionCreate
 
 _logger = logging.getLogger("ndlmpanel.gateway")
@@ -31,6 +32,7 @@ class AgentGatewayService(Singleton):
         self._runtimeSessions: dict[str, RuntimeAgentSession] = {}
         self._turnTasks: dict[str, asyncio.Task] = {}
         self._sendLocks: dict[str, asyncio.Lock] = {}
+        self._activeConns: dict[str, tuple[WebSocket, asyncio.Lock]] = {}
 
     def invalidateRuntime(self, sessionId: str) -> None:
         """使缓存的 RuntimeSession 失效，下次 _getRuntimeSession 将重建。"""
@@ -74,6 +76,7 @@ class AgentGatewayService(Singleton):
 
         assert sessionId is not None
         sendLock = self._sendLocks.setdefault(sessionId, asyncio.Lock())
+        self._activeConns[sessionId] = (websocket, sendLock)
         await self._send(websocket, sendLock, self._serverEvent(
             "agent.ready", sessionId, None, {"sessionId": sessionId}
         ))
@@ -352,6 +355,18 @@ class AgentGatewayService(Singleton):
                         metadata={"tool_name": tcData.get("tool_name", "")},
                     )
 
+                    # ── 特权提权事件检测 ──
+                    tool_name = tcData.get("tool_name", "")
+                    if tool_name == "submitElevation" and tcData.get("success"):
+                        await self._handleElevationResult(sessionId, websocket, sendLock, tcData)
+                    elif tool_name == "runPrivileged":
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "elevation.resolved", sessionId, tcData.get("trace_id"), {
+                                "status": "approved" if tcData.get("success") else "failed",
+                                "message": "特权命令已执行" if tcData.get("success") else "特权执行失败",
+                            }
+                        ))
+
                 elif event.type == EventType.APPROVAL_REQUIRED:
                     self.sessionDao.updateStatus(sessionId, "waiting_approval")
                     # 持久化审批事件数据（WS 重连时恢复用）
@@ -626,6 +641,70 @@ class AgentGatewayService(Singleton):
             "timestamp": time.time(),
             "data": data,
         }
+
+    async def pushElevationEvent(self, sessionId: str, eventType: str, data: dict) -> bool:
+        """向指定 session 推送特权提权事件。"""
+        pair = self._activeConns.get(sessionId)
+        if pair is None:
+            _logger.warning("pushElevationEvent: session=%s 无活跃连接", sessionId)
+            return False
+        websocket, sendLock = pair
+        try:
+            await self._send(websocket, sendLock, self._serverEvent(
+                eventType, sessionId, None, data,
+            ))
+            return True
+        except Exception:
+            _logger.exception("pushElevationEvent: session=%s 推送失败", sessionId)
+            self._activeConns.pop(sessionId, None)
+            return False
+
+    async def _handleElevationResult(
+        self, sessionId: str, websocket: WebSocket,
+        sendLock: asyncio.Lock, tcData: dict,
+    ) -> None:
+        """处理 submitElevation 工具结果：推送 WS 事件 + 同步到本地 ElevationService。"""
+        import json
+
+        tool_output = tcData.get("output", "")
+        try:
+            result_data = json.loads(tool_output) if isinstance(tool_output, str) else {}
+        except (json.JSONDecodeError, TypeError):
+            _logger.warning("_handleElevationResult: 无法解析 tool output")
+            return
+
+        code = result_data.get("code")
+        commands = result_data.get("commands", [])
+        reason = result_data.get("reason", "")
+        if not code or not commands:
+            _logger.warning("_handleElevationResult: 缺少 code 或 commands")
+            return
+
+        # 同步到本地 ElevationService（CLI approve 时查找用）
+        elevation = ElevationService()
+        entry = elevation.get_code(code)
+        if entry is None:
+            elevation.generate_code(
+                session_id=sessionId,
+                commands=commands,
+                reason=reason,
+                ttl_seconds=int(result_data.get("ttl_seconds", 3600)),
+                max_ops=int(result_data.get("max_ops", 10)),
+                code=code,  # 使用 MCP 子进程生成的 code，不重新随机生成
+            )
+            _logger.info("elevation: code=%s 已同步到 Gateway ElevationService", code)
+
+        # 推送 WS 事件到前端
+        await self._send(websocket, sendLock, self._serverEvent(
+            "elevation.requested", sessionId, tcData.get("trace_id"), {
+                "code": code,
+                "commands": commands,
+                "reason": reason,
+                "ttl_seconds": result_data.get("ttl_seconds", 3600),
+                "max_ops": result_data.get("max_ops", 10),
+                "message": f"Agent 请求特权操作，请在 SSH 执行: sudo nereus approve {code}",
+            }
+        ))
 
     @staticmethod
     def _newSessionId() -> str:

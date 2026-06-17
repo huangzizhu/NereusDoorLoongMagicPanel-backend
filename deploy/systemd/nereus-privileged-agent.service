@@ -1,5 +1,6 @@
 [Unit]
-Description=Nereus Privileged Agent
+Description=Nereus Privileged Agent (V2)
+Documentation=https://github.com/nereus/privileged-agent
 After=network.target
 
 [Service]
@@ -7,12 +8,49 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/nereus/backend
+
+# ── V2 安全配置 ──
 Environment=NDLM_PRIVILEGED_AGENT_SOCKET=/run/ndlmpanel/privileged-agent.sock
 Environment=NDLM_PRIVILEGED_AGENT_SOCKET_GROUP=backend
 Environment=NDLM_PRIVILEGED_AGENT_SOCKET_MODE=660
+Environment=NDLM_PRIVILEGED_AGENT_PUBKEY=/etc/nereus/ed25519_pub.pem
+Environment=NDLM_PRIVILEGED_AGENT_ALLOWED_UIDS=65534
+Environment=NDLM_PRIVILEGED_AGENT_NONCE_TTL=300
+Environment=NDLM_PRIVILEGED_AGENT_TIMESTAMP_TOLERANCE=30
+
 ExecStart=/opt/nereus/backend/.venv/bin/python -m privileged_agent.server
 Restart=always
 RestartSec=2
+
+# ── systemd 安全加固（V2） ──
+# 内核防护
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+# 文件系统隔离
+ProtectHome=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/run/ndlmpanel /opt/ndlmpanel /etc/nginx /var/www /etc/docker /etc/letsencrypt
+
+# 权限提升防护
+NoNewPrivileges=yes
+
+# 运行时目录（自动创建 /run/ndlmpanel，省去 mkdir）
+RuntimeDirectory=ndlmpanel
+RuntimeDirectoryMode=0750
+
+# 进程退出时清理 IPC
+RemoveIPC=yes
+
+# 限制 capabilities
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+# 内存限制（防止 fork bomb）
+MemoryMax=256M
+MemoryHigh=192M
 
 [Install]
 WantedBy=multi-user.target

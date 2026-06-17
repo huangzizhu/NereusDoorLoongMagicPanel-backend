@@ -18,6 +18,8 @@ from gateway.controller.DatabaseController import DatabaseController
 from gateway.controller.NginxController import NginxController
 from gateway.controller.AgentController import AgentController
 from gateway.controller.ModelPricingController import ModelPricingController
+from gateway.controller.AdminController import AdminController
+
 from gateway.orm.OrmEngine import OrmEngine
 
 from starlette.formparsers import MultiPartParser
@@ -47,6 +49,7 @@ class Application:
         self.controllers.append(NginxController())
         self.controllers.append(AgentController())
         self.controllers.append(ModelPricingController())
+        self.controllers.append(AdminController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()

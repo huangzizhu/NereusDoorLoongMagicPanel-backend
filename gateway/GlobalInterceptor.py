@@ -23,6 +23,8 @@ class GlobalInterceptor(BaseHTTPMiddleware):
             "/user/login",
             "/docs",
             "/user/refresh",
+            # Admin CLI API — 使用自己的 Bearer token 鉴权，不走 cookie
+            "/admin/elevation",
         }
         self.websocketPaths = {
             "/terminal/ws",
@@ -33,12 +35,23 @@ class GlobalInterceptor(BaseHTTPMiddleware):
             "/system/health",
         }
 
+    def _is_excluded(self, path: str) -> bool:
+        """判断路径是否免拦截（精确匹配 + 前缀匹配）。
+
+        普通路径精确匹配（如 /user/login），
+        管理路径前缀匹配（如 /admin/elevation/*）。
+        """
+        for excluded in self.excludePaths:
+            if path == excluded or path.startswith(excluded + "/"):
+                return True
+        return False
+
     async def dispatch(self, request: Request, call_next):
         if request.url.path in self.websocketPaths:
             return await call_next(request)
 
         userId = 0
-        if request.url.path not in self.excludePaths:
+        if not self._is_excluded(str(request.url.path)):
             try:
                 # token拦截
                 accessToken = request.cookies.get("accessToken")

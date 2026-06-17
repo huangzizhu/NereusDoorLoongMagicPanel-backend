@@ -1,0 +1,140 @@
+# 特权代理命令注册表
+#
+# 此处定义的命令是特权代理（root）允许执行的全部操作。
+# 策略引擎（后端）不能修改此文件 —— 它是特权代理本地加载的配置文件。
+#
+# 加新能力：只需在此添加新条目，无需改代码。
+
+commands:
+  # ── 基础文件操作 ──
+  mkdir:
+    description: 创建目录
+    path_validation:
+      allowed_parents:
+        - /etc/nginx
+        - /var/www
+        - /opt/ndlmpanel
+    risk: write
+
+  write_file:
+    description: 写入文件内容
+    path_validation:
+      allowed_parents:
+        - /etc/nginx
+        - /var/www
+        - /opt/ndlmpanel
+        - /etc/docker
+      max_size: 10485760  # 10 MB
+    risk: write
+
+  chmod:
+    description: 修改文件/目录权限
+    allowed_args:
+      mode_regex: "^0[0-7]{3}$"
+    path_validation:
+      allowed_parents:
+        - /etc/nginx
+        - /var/www
+        - /opt/ndlmpanel
+    risk: write
+
+  touch:
+    description: 创建空文件
+    path_validation:
+      allowed_parents:
+        - /etc/nginx
+        - /var/www
+        - /opt/ndlmpanel
+    risk: write
+
+  rm:
+    description: 删除文件
+    allowed_args:
+      flags: ["-f", "-rf"]
+    path_validation:
+      allowed_parents:
+        - /var/www
+        - /opt/ndlmpanel/tmp_scripts
+    risk: dangerous
+
+  # ── Nginx ──
+  nginx_test:
+    description: 测试 Nginx 配置
+    command_line: "nginx -t"
+    risk: read_only
+
+  nginx_reload:
+    description: 重载 Nginx 配置
+    command_line: "systemctl reload nginx"
+    risk: write
+
+  nginx_restart:
+    description: 重启 Nginx
+    command_line: "systemctl restart nginx"
+    risk: write
+
+  # ── 服务管理 ──
+  systemctl:
+    description: 管理系统服务
+    allowed_args:
+      actions: [reload, restart, start, stop, enable, disable]
+      services: [nginx, docker, firewalld, sshd, mysql, php-fpm]
+    risk: write
+
+  # ── 证书管理 ──
+  certbot:
+    description: 管理 SSL 证书
+    allowed_args:
+      subcommands: [certonly, renew]
+      flags: ["--webroot", "--non-interactive", "--agree-tos"]
+    risk: write
+
+  # ── 数据库 ──
+  mysql_exec:
+    description: 执行 MySQL 命令
+    allowed_sql_prefixes:
+      - CREATE DATABASE
+      - CREATE USER
+      - GRANT
+      - SHOW
+      - SELECT
+      - ALTER USER
+      - FLUSH
+    risk: write
+
+  # ── 防火墙 (firewalld) ──
+  firewall_cmd:
+    description: 执行 firewall-cmd 操作
+    allowed_args:
+      subcommands:
+        - --add-port
+        - --remove-port
+        - --list-ports
+        - --add-rich-rule
+        - --remove-rich-rule
+        - --list-rich-rules
+        - --reload
+        - --state
+        - --get-default-zone
+      flags: ["--permanent"]
+    risk: write
+
+  # ── Docker ──
+  docker_daemon:
+    description: 修改 Docker 守护进程配置
+    command_line: "systemctl restart docker"
+    risk: write
+
+  # ── 调试/只读 ──
+  cat:
+    description: 读取文件内容
+    path_validation:
+      allowed_parents:
+        - /etc/nginx
+        - /var/log
+        - /opt/ndlmpanel
+    risk: read_only
+
+  ls:
+    description: 列出目录
+    risk: read_only

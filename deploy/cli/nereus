@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+"""nereus — 特权代理 CLI 工具
+
+用于审批/查看/吊销特权码。AI 审计请求由后端统一发送。
+
+用法:
+    sudo nereus init                      生成 admin_token（首次部署）
+    sudo nereus approve <CODE>            批准一个特权码
+    sudo nereus list-pending              列出待审批码
+    sudo nereus revoke <TOKEN_ID>         吊销已签发的 token
+    sudo nereus history                   查看审批历史
+    sudo nereus help                      显示帮助
+"""
+
+import json
+import os
+import secrets
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+try:
+    from rich.console import Console
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+    from rich.table import Table
+
+    _HAS_RICH = True
+except ImportError:
+    _HAS_RICH = False
+from pathlib import Path
+
+# ── 配置 ──
+ADMIN_TOKEN_PATH = os.getenv("NDLM_ADMIN_TOKEN_PATH", "/etc/nereus/admin_token")
+API_BASE = os.getenv("NDLM_ADMIN_URL", "http://127.0.0.1:8000")
+API_PREFIX = "/admin/elevation"
+
+
+# ════════════════════════════════════════════════════════════
+#  工具函数
+# ════════════════════════════════════════════════════════════
+
+
+def die(msg: str, code: int = 1):
+    print(f"❌ {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def read_admin_token() -> str:
+    try:
+        return Path(ADMIN_TOKEN_PATH).read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        die(f"admin_token 不存在: {ADMIN_TOKEN_PATH}\n  请先执行: sudo nereus init")
+    except PermissionError:
+        die(f"无权限读取: {ADMIN_TOKEN_PATH}\n  请使用 sudo")
+
+
+def api_get(path: str) -> dict:
+    token = read_admin_token()
+    url = f"{API_BASE}{API_PREFIX}{path}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        die(f"API 请求失败 ({e.code}): {body}")
+    except urllib.error.URLError as e:
+        die(f"无法连接后端 ({API_BASE}): {e.reason}")
+    return {}  # unreachable
+
+
+def api_post(path: str, body: dict) -> dict:
+    token = read_admin_token()
+    url = f"{API_BASE}{API_PREFIX}{path}"
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        die(f"API 请求失败 ({e.code}): {body}")
+    except urllib.error.URLError as e:
+        die(f"无法连接后端 ({API_BASE}): {e.reason}")
+    return {}
+
+
+def _is_success(resp: dict) -> bool:
+    """判断 API 响应是否成功（项目标准: code=1）。"""
+    return resp.get("code") == 1
+
+
+# ════════════════════════════════════════════════════════════
+#  子命令
+# ════════════════════════════════════════════════════════════
+
+
+def cmd_init():
+    """生成 admin_token 文件。
+
+    Usage: sudo nereus init [--user nobody] [--group nogroup]
+
+    --user / --group: 将 token 文件所有权交给后端运行用户。
+    默认不改变所有权（仅 root 可读），适合 root 运行后端的场景。
+
+    通常用法:
+      sudo nereus init --user nobody --group nogroup
+    """
+    if os.geteuid() != 0:
+        die("init 需要 root 权限（sudo）")
+
+    # 解析可选参数
+    chown_user = None
+    chown_group = None
+    args = sys.argv[2:] if len(sys.argv) > 2 else []
+    i = 0
+    while i < len(args):
+        if args[i] == "--user" and i + 1 < len(args):
+            chown_user = args[i + 1]
+            i += 2
+        elif args[i] == "--group" and i + 1 < len(args):
+            chown_group = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    token = secrets.token_hex(32)
+    path = Path(ADMIN_TOKEN_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token + "\n", encoding="utf-8")
+
+    # 使文件对后端进程可读
+    if chown_user:
+        grp_name = chown_group or chown_user  # 不传 group 时默认同用户名
+        try:
+            import grp as _grp
+            import pwd as _pwd
+            uid = _pwd.getpwnam(chown_user).pw_uid
+            gid = _grp.getgrnam(grp_name).gr_gid
+            os.chown(str(path), uid, gid)
+            path.chmod(0o400)
+            print(f"✅ admin_token 已生成: {ADMIN_TOKEN_PATH}")
+            print(f"   所有权: {chown_user}:{grp_name}  (400)")
+        except Exception as e:
+            die(f"无法设置所有权 {chown_user}:{chown_group} — {e}")
+    else:
+        path.chmod(0o400)
+        print(f"✅ admin_token 已生成: {ADMIN_TOKEN_PATH}  (400 root:root)")
+        print(f"   ⚠️  root 可读，后端如需读取请执行:")
+        print(f"      sudo chown <后端用户>:<后端组> {ADMIN_TOKEN_PATH}")
+        print(f"      例如: sudo chown nobody:nogroup {ADMIN_TOKEN_PATH}")
+
+    print(f"   Token: {token}")
+
+
+def _display_audit_report(audit: dict):
+    """用 rich 渲染 AI 审计报告（终端 Markdown 面板）。"""
+    risk = audit.get("risk_level", "UNKNOWN")
+    summary = audit.get("summary", "无摘要")
+    findings = audit.get("findings", [])
+    dangerous = audit.get("dangerous_commands", [])
+    advice = audit.get("ai_advice", "")
+
+    # 风险等级图标
+    risk_icon = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴", "CRITICAL": "🚨", "UNKNOWN": "⚪"}
+    icon = risk_icon.get(risk, "⚪")
+
+    if _HAS_RICH:
+        console = Console()
+        # 构建 Markdown 报告
+        md_lines = [
+            f"## 🤖 AI 安全审计报告\n",
+            f"**风险等级**: {icon} **{risk}**\n",
+            f"**行为总结**: {summary}\n",
+        ]
+
+        if findings:
+            md_lines.append("### 发现项\n")
+            for f in findings:
+                sev_icon = {"danger": "🔴", "warning": "🟡", "info": "ℹ️"}
+                sev = sev_icon.get(f.get("severity", "info"), "•")
+                desc = f.get("description", "")
+                code = f.get("code_snippet", "")
+                rec = f.get("recommendation", "")
+                md_lines.append(f"- {sev} **{desc}**")
+                if code:
+                    md_lines.append(f"  ```\n  {code}\n  ```")
+                if rec:
+                    md_lines.append(f"  > 建议: {rec}")
+                md_lines.append("")
+
+        if dangerous:
+            md_lines.append("### ⚠️ 危险指令\n")
+            for cmd in dangerous:
+                md_lines.append(f"- `{cmd}`")
+            md_lines.append("")
+
+        if advice:
+            md_lines.append(f"**AI 建议**: {advice}\n")
+
+        md_text = "\n".join(md_lines)
+        console.print(Panel(Markdown(md_text), title="🔐 安全审计", border_style="yellow"))
+    else:
+        # 降级方案：纯文本
+        print()
+        print("╭" + "─" * 58 + "╮")
+        print(f"│ 🤖 AI 安全审计报告{' ' * 38}│")
+        print(f"│   风险等级: {icon} {risk}{' ' * (45 - len(risk))}│")
+        print(f"│   行为总结: {summary[:50]}{' ' * (44 - min(len(summary), 50))}│")
+        if dangerous:
+            print(f"│   {'─' * 54}│")
+            print(f"│   ⚠️ 危险指令:{' ' * 45}│")
+            for cmd in dangerous:
+                display = cmd[:50]
+                print(f"│     - {display}{' ' * (49 - len(display))}│")
+        if advice:
+            print(f"│   {'─' * 54}│")
+            print(f"│   AI 建议: {advice[:50]}{' ' * (44 - min(len(advice), 50))}│")
+        print("╰" + "─" * 58 + "╯")
+    print()
+
+
+def cmd_approve(code: str):
+    """批准一个 pending 的特权码。
+
+    流程:
+      1. 查询 code 信息
+      2. 显示待审批命令
+      3. （通道 B）触发 AI 安全审计 → 显示报告 → 强制预览
+      4. 管理员确认 → 批准
+    """
+    # 1. 查询 code 信息
+    result = api_get(f"/codes/{code}")
+    if not _is_success(result):
+        die(result.get("message", "查询失败"))
+    data = result.get("data", {})
+
+    if data.get("status") != "pending":
+        die(f"code {code} 状态不是 pending (当前: {data.get('status')})")
+
+    commands = data.get("commands", [])
+    has_multiple = len(commands) > 1
+
+    # 2. 显示待审批信息
+    print("\n" + "=" * 60)
+    print("🔐  特权请求批准")
+    print("=" * 60)
+    print(f"  Session:  {data.get('session_id', '?')}")
+    print(f"  原因:     {data.get('reason', '?')}")
+    print(f"  请求者:   AI Agent")
+    print()
+    print(f"  将批准以下操作:")
+    for i, cmd in enumerate(commands, 1):
+        cmd_name = cmd.get("command", "?")
+        cmd_args = " ".join(str(a) for a in cmd.get("args", []))
+        print(f"    {i}. {cmd_name} {cmd_args}")
+    print()
+    ttl = data.get("ttl_seconds", 3600)
+    max_ops = data.get("max_ops", 10)
+    print(f"  有效期: {ttl // 60} 分钟  |  操作次数上限: {max_ops} 次")
+    print()
+
+    # 3. 通道 B（多命令/脚本）→ AI 审计
+    if has_multiple:
+        print("  ── 正在进行 AI 安全审计 ──")
+        print()
+        audit_result = api_get(f"/audit/{code}")
+        if _is_success(audit_result):
+            audit = audit_result.get("data", {}).get("audit", {})
+            _display_audit_report(audit)
+        else:
+            print("  ⚠️  AI 审计不可用，请人工审查")
+            print()
+
+        # 强制预览提示
+        print("  " + "─" * 56)
+        print("  请仔细阅读以上 AI 审计报告。")
+        print("  你即将批准的操作具有 root 权限。")
+        print()
+
+    # 4. 最终确认
+    try:
+        confirm = input("  批准以上操作? (y/N): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        die("已取消")
+
+    if confirm != "y":
+        print("❌ 已拒绝")
+        api_post("/reject", {"code": code, "reason": "管理员手动拒绝"})
+        return
+
+    # 5. 提交批准
+    result = api_post("/approve", {"code": code, "approved_by": "admin"})
+    if not _is_success(result):
+        die(result.get("message", "批准失败"))
+
+    data = result.get("data", {})
+    print()
+    print(f"✅ 已批准！Agent 可执行")
+    print(f"   Token ID: {data.get('token_id', '?')}")
+    print(f"   最大执行: {data.get('max_ops', '?')} 次")
+
+
+def cmd_list_pending():
+    """列出所有待审批的 code。"""
+    result = api_get("/pending")
+    if not _is_success(result):
+        die(result.get("message", "查询失败"))
+    pending = result.get("data", [])
+
+    if not pending:
+        print("📭 没有待审批的特权码")
+        return
+
+    print(f"\n📋  待审批特权码 ({len(pending)} 个)")
+    print("-" * 60)
+    for entry in pending:
+        cmds = ", ".join(c.get("command", "?") for c in entry.get("commands", []))
+        print(f"  Code:     {entry.get('code', '?')}")
+        print(f"  原因:     {entry.get('reason', '?')[:60]}")
+        print(f"  操作:     {cmds}")
+        print(f"  过期:     {entry.get('requested_at', '?')[:19]}")
+        print()
+
+
+def cmd_revoke(token_id: str):
+    """吊销一个已签发的 token。"""
+    try:
+        confirm = input(f"确认吊销 token {token_id}? (y/N): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        die("已取消")
+
+    if confirm != "y":
+        print("❌ 已取消")
+        return
+
+    result = api_post("/revoke", {"token_id": token_id})
+    if not _is_success(result):
+        die(result.get("message", "吊销失败"))
+
+    print(f"✅ Token 已吊销: {token_id}")
+
+
+def cmd_history():
+    """查看审批历史。"""
+    result = api_get("/history?limit=20")
+    if not _is_success(result):
+        die(result.get("message", "查询失败"))
+    history = result.get("data", [])
+
+    if not history:
+        print("📭 没有审批历史")
+        return
+
+    print(f"\n📋  审批历史 (最近 {len(history)} 条)")
+    print("-" * 80)
+    for entry in history:
+        code = entry.get("code", "?")
+        status = entry.get("status", "?")
+        reason = entry.get("reason", "?")[:40]
+        cmds = ", ".join(c.get("command", "?") for c in entry.get("commands", []))
+
+        status_icon = {
+            "approved": "✅",
+            "rejected": "❌",
+            "expired": "⏰",
+            "pending": "⏳",
+            "consumed": "✅",
+        }.get(status, "❓")
+
+        print(f"  {status_icon} {code}  [{status}]  {reason}")
+        print(f"     {cmds}")
+        print(f"     {entry.get('requested_at', '?')[:19]}")
+        print()
+
+
+def cmd_help():
+    print("""用法: sudo nereus <命令> [参数]
+
+命令:
+  init                    生成 admin_token（首次部署需要）
+  approve <CODE>          批准一个特权码
+  list-pending            列出待审批的特权码
+  revoke <TOKEN_ID>       吊销已签发的 token
+  history                 查看审批历史
+  help                    显示此帮助
+
+环境变量:
+  NDLM_ADMIN_URL          后端地址 (默认: http://127.0.0.1:8000)
+""")
+
+
+# ════════════════════════════════════════════════════════════
+#  入口
+# ════════════════════════════════════════════════════════════
+
+
+def main():
+    if len(sys.argv) < 2:
+        cmd_help()
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    if command == "init":
+        cmd_init()
+    elif command == "approve":
+        if len(sys.argv) < 3:
+            die("用法: sudo nereus approve <CODE>")
+        cmd_approve(sys.argv[2])
+    elif command == "list-pending":
+        cmd_list_pending()
+    elif command == "revoke":
+        if len(sys.argv) < 3:
+            die("用法: sudo nereus revoke <TOKEN_ID>")
+        cmd_revoke(sys.argv[2])
+    elif command == "history":
+        cmd_history()
+    elif command in ("help", "--help", "-h"):
+        cmd_help()
+    else:
+        print(f"未知命令: {command}")
+        cmd_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

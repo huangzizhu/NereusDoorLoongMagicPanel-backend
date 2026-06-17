@@ -92,6 +92,11 @@ MCP_ONLY_TOOL_NAMES: tuple[str, ...] = (
     "addFirewallPortPrivileged",
     "removeFirewallPortPrivileged",
     "manageSystemServicePrivileged",
+    "writePrivilegedFile",
+    "nginxWriteStaticFile",
+    # V2 特权提权工具
+    "submitElevation",
+    "runPrivileged",
 )
 
 
@@ -145,9 +150,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "addFirewallPortPrivileged": "Add an allow firewall port rule through the privileged agent.",
     "removeFirewallPortPrivileged": "Remove an allow firewall port rule through the privileged agent.",
     "manageSystemServicePrivileged": "Inspect or change an allowed systemd service through the privileged agent for non-status actions.",
+    "writePrivilegedFile": "Write a file to a privileged path (whitelist protected: nginx/var/www/docker etc.). Requires reason for approval.",
+    "nginxWriteStaticFile": "Write a static file (html/css/js) to Nginx webroot (/etc/nginx/html/ or /var/www/). Requires reason for approval.",
+    "submitElevation": "Submit a privilege elevation request. Generates a one-time approval code that the admin must approve via 'sudo nereus approve <CODE>'. Use this when a command needs root/high privileges that the current process doesn't have.",
+    "runPrivileged": "Execute a privileged command using an approved elevation token. Call this after the admin has approved the elevation code.",
 }
 
 TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
+    "submitElevation": {"requiresPrivilege": True, "usesElevationFlow": True},
+    "runPrivileged": {"requiresPrivilege": True, "usesElevationFlow": True, "usesPrivilegedAgent": True},
     "listProcesses": {"mayReturnLargeOutput": True, "preferredAlternative": "listProcessesBrief"},
     "getZombieOrphanProcesses": {"preferredAlternative": "getProcessAnomalies"},
     "getDockerContainerInfo": {
@@ -438,6 +449,69 @@ def manageSystemServicePrivileged(serviceName: str, action: str = "status") -> d
     )
 
 
+def writePrivilegedFile(
+    targetPath: str,
+    content: str,
+    reason: str = "",
+) -> dict:
+    """向特权路径写入文件（仅限受白名单保护的路径）。
+
+    适用于：
+    - 向 /etc/nginx/ 写入站点配置
+    - 向 /var/www/ 写入静态文件
+    - 向 /etc/docker/ 写入 daemon.json
+
+    不适用于普通路径 — 普通路径请用 writeTextFile。
+
+    Args:
+        targetPath: 目标路径（必须在特权代理的白名单内）
+        content: 文件内容
+        reason: 调用原因说明（供审批展示）
+    """
+    try:
+        result = _callPrivileged(
+            PrivilegedAction.FILE_WRITE_TO_ALLOWED,
+            {"targetPath": targetPath, "content": content},
+        )
+        return {"success": True, "data": result}
+    except McpToolExecutionError:
+        raise
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "requiresPrivilege": True,
+        }
+
+
+def nginxWriteStaticFile(
+    targetPath: str,
+    content: str,
+    reason: str = "",
+) -> dict:
+    """向 Nginx webroot 写入静态文件（html/css/js）。
+
+    Args:
+        targetPath: 目标路径（必须在 /etc/nginx/html/ 或 /var/www/ 下）
+        content: 文件内容
+        reason: 调用原因说明
+    """
+    try:
+        result = _callPrivileged(
+            PrivilegedAction.NGINX_WRITE_STATIC_FILE,
+            {"targetPath": targetPath, "content": content},
+        )
+        return {"success": True, "data": result}
+    except McpToolExecutionError:
+        raise
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "requiresPrivilege": True,
+        }
+
+
 def buildDefaultTools(includeStdioOnly: bool = True) -> list[AdaptedTool]:
     byName = {fn.__name__: fn for fn in ALL_TOOL_FUNCTIONS}
     tools: list[AdaptedTool] = []
@@ -469,6 +543,10 @@ def buildDefaultTools(includeStdioOnly: bool = True) -> list[AdaptedTool]:
 def _mcpOnlyRiskLevel(name: str) -> ToolRiskLevel:
     if name in {"addFirewallPortPrivileged", "removeFirewallPortPrivileged", "manageSystemServicePrivileged"}:
         return ToolRiskLevel.DANGEROUS
+    if name in {"writePrivilegedFile", "nginxWriteStaticFile"}:
+        return ToolRiskLevel.WRITE
+    if name in {"submitElevation", "runPrivileged"}:
+        return ToolRiskLevel.DANGEROUS
     return ToolRiskLevel.READ_ONLY
 
 
@@ -490,6 +568,121 @@ def _truncate(value: str, maxLength: int) -> str:
     if len(value) <= maxLength:
         return value
     return value[: maxLength - 3] + "..."
+
+
+# ════════════════════════════════════════════════════════════
+#  V2 特权提权工具 — 通过 ElevationService + PrivilegedAgentClient
+# ════════════════════════════════════════════════════════════
+
+
+def submitElevation(
+    session_id: str,
+    commands: list[dict[str, Any]],
+    reason: str,
+    ttl_seconds: int = 3600,
+    max_ops: int = 10,
+) -> dict:
+    """提交特权提权申请。生成一个一次性审批码，管理员需在 SSH 中执行
+    `sudo nereus approve <CODE>` 批准。
+
+    ⚠ MCP 子进程不存储任何状态。code 由工具生成后返回，
+    由 Gateway 进程的 _handleElevationResult 同步到 ElevationService。
+
+    Args:
+        session_id: 当前 Agent session ID
+        commands: 需要特权执行的命令列表
+                  [{"command": "mkdir", "args": ["-p", "/var/www/test"]}, ...]
+        reason: 申请原因说明（显示给管理员）
+        ttl_seconds: code 有效期（秒），默认 1 小时
+        max_ops: 批准后最大执行次数，默认 10
+
+    Returns:
+        {"code": "NGA7-K3X9", "status": "pending", "commands": [...], ...}
+    """
+    import secrets as _secrets
+    _chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    _code = "".join(_secrets.choice(_chars) for _ in range(4)) + "-" + "".join(_secrets.choice(_chars) for _ in range(4))
+    # 归一化 command：LLM 可能传字符串或列表两种格式
+    _normalized_commands = []
+    for _c in commands:
+        _cmd = _c["command"]
+        if isinstance(_cmd, list):
+            _cmd = " ".join(str(x) for x in _cmd)
+        _normalized_commands.append({"command": _cmd, "args": _c.get("args", [])})
+    return {
+        "code": _code,
+        "status": "pending",
+        "commands": _normalized_commands,
+        "reason": reason,
+        "ttl_seconds": ttl_seconds,
+        "max_ops": max_ops,
+    }
+
+
+def runPrivileged(
+    token_id: str,
+    command_index: int,
+    args: list[str],
+    session_id: str,
+    reason: str = "",
+) -> dict:
+    """使用已批准的 token 执行特权命令。
+
+    调用此工具前必须先通过 submitElevation 申请 + 管理员 approve。
+
+    ⚠ 主执行逻辑不在 MCP 子进程！
+    AgentCore._executeTool() 在 Gateway 进程中拦截此工具调用，
+    直接在 Gateway 进程内调用本函数（不经过 stdio 发给 MCP 子进程），
+    确保 ElevationService 的 token 存储与 AdminController 在同一进程。
+    MCP 子进程中保留此函数仅用于 tools/list 注册 schema。
+
+    如需执行特权命令的完整链路：
+    LLM → AgentCore._runLoop → _handleApproval → _executeTool
+    → [Gateway 进程] runPrivileged() → ElevationService.create_signed_request()
+    → PrivilegedAgentClient.call_v2() → [Unix socket] → PrivilegedAgentServer
+
+    Args:
+        token_id: 管理员 approve 后返回的 token ID
+        command_index: 命令在申请列表中的索引（0 开始）
+        args: 实际执行的参数（必须与申请时一致，否则被拒绝）
+        session_id: 当前 Agent session ID
+        reason: 调用原因说明（仅用于审批展示，不参与执行逻辑）
+
+    Returns:
+        命令执行结果
+    """
+    from gateway.service.elevation_service import ElevationService
+
+    svc = ElevationService()
+    signed_req = svc.create_signed_request(
+        token_id=token_id,
+        command_index=command_index,
+        actual_args=args,
+        session_id=session_id,
+    )
+    if signed_req is None:
+        raise McpToolExecutionError(
+            _errorPayload(
+                errorCode="ELEVATION_FAILED",
+                errorMessage="Token 无效、过期、次数用尽或参数不匹配",
+                backend="elevation",
+            )
+        )
+
+    # 发送给特权代理执行
+    client = PrivilegedAgentClient()
+    try:
+        return client.call_v2(signed_req)
+    except PrivilegedAgentRemoteError as exc:
+        raise McpToolExecutionError(
+            _errorPayload(
+                errorCode=exc.code,
+                errorMessage=exc.message,
+                details=exc.details,
+                requiresPrivilege=True,
+                backend="privileged_agent",
+            )
+        ) from exc
 
 
 def _callPrivileged(action: PrivilegedAction, payload: dict[str, Any]) -> Any:

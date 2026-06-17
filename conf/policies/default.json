@@ -17,9 +17,16 @@
             "/etc/shadow", "/etc/passwd", "/etc/sudoers",
             "/boot", "/usr/lib", "/lib", "/proc", "/sys"
         ],
+        "allowed_privileged_paths": [
+            "/etc/nginx/sites-enabled",
+            "/etc/nginx/conf.d",
+            "/etc/nginx/html",
+            "/var/www"
+        ],
         "require_approval": [
             "systemctl restart", "systemctl stop",
-            "kill", "chmod", "chown", "firewall-cmd"
+            "kill", "chmod", "chown", "firewall-cmd",
+            "writePrivilegedFile", "nginxWriteStaticFile"
         ],
         "max_output_chars": 4000
     }

@@ -26,3 +26,6 @@ panel.db
 .reasonix
 .agents
 
+# Agent workspace
+workspace/
+

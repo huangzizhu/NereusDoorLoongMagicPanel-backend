@@ -489,7 +489,12 @@ class AgentCore:
 
                     risk = self._registry.getRiskLevel(name)
                     # 提取并剥离 AI 调用理由（仅 write/dangerous 工具有此参数）
-                    ai_reason = args.pop("reason", "") if risk != ToolRiskLevel.READ_ONLY else ""
+                    # 注意：submitElevation 等工具原生就有 reason 参数，不能剥离
+                    _native_reason_tools = {"submitElevation", "runPrivileged", "writePrivilegedFile", "nginxWriteStaticFile"}
+                    if risk != ToolRiskLevel.READ_ONLY and name not in _native_reason_tools:
+                        ai_reason = args.pop("reason", "")
+                    else:
+                        ai_reason = args.get("reason", "")
 
                     # ── 打回：write/dangerous 工具必须带 reason ──
                     if risk != ToolRiskLevel.READ_ONLY and not ai_reason:
@@ -830,14 +835,55 @@ class AgentCore:
         if self._recorder is not None:
             self._recorder.record(traceId, sessionId, eventType, data)
 
+    def _debug_write(self, msg: str):
+        """写调试日志到文件（避免 print 污染 MCP stdout）。"""
+        import os as _os
+        _dbg_path = _os.environ.get("NDLM_DEBUG_LOG", "/tmp/elevation_debug.log")
+        try:
+            with open(_dbg_path, "a") as _f:
+                _f.write(msg + "\n")
+        except Exception:
+            pass
+
     async def _executeTool(self, name: str, args: dict) -> str:
+        # ── runPrivileged 特殊处理：在 Gateway 进程内直接执行 ──
+        # 原因：ElevationService（token 存储）在 Gateway 进程中，
+        # 如果通过 stdio 发给 MCP 子进程，子进程的 ElevationService 实例没有 token。
+        # 直接在 Gateway 进程内调用 runPrivileged 确保 token 可见。
+        if name == "runPrivileged":
+            from ndlmpanel_agent.mcp.server.tool_adapter import runPrivileged as _run_privileged
+            from ndlmpanel_agent.mcp.server.tool_adapter import McpToolExecutionError
+            try:
+                result = _run_privileged(**args)
+                return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+            except McpToolExecutionError as exc:
+                return json.dumps(exc.payload, ensure_ascii=False, indent=2, default=str)
+            except Exception as exc:
+                _logger.exception("_executeTool: runPrivileged 异常")
+                return json.dumps({
+                    "success": False,
+                    "errorCode": exc.__class__.__name__,
+                    "errorMessage": str(exc),
+                }, ensure_ascii=False)
+
         loop = asyncio.get_running_loop()
         reqId = gen_tool_call_id()
         mcpReq = encodeRequest("tools/call",
                                {"name": name, "arguments": args},
                                reqId)
         raw = await loop.run_in_executor(None, self._dispatcher.handle, mcpReq)
-        data = json.loads(raw)
+        self._debug_write(f"[DEBUG _executeTool] name={name} args_keys={list(args.keys())}")
+        self._debug_write(f"[DEBUG _executeTool] mcpReq={mcpReq}")
+        self._debug_write(f"[DEBUG _executeTool] raw={repr(raw)}")
+        self._debug_write(f"[DEBUG _executeTool] raw type={type(raw).__name__}")
+        if raw is None or raw.strip() == "":
+            return f"<error: MCP 返回了空结果, raw={repr(raw)}>"
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            self._debug_write(f"[DEBUG _executeTool] JSONDecodeError: {e}")
+            self._debug_write(f"[DEBUG _executeTool] raw first 500 chars: {raw[:500]}")
+            return f"<error: JSON 解析失败: {e}, raw={raw[:200]}>"
         result = data.get("result", {})
         content = result.get("content", [{}])
         return content[0].get("text", str(result))

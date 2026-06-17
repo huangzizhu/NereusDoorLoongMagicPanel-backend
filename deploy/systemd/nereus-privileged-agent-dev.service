@@ -1,5 +1,6 @@
 [Unit]
-Description=Nereus Privileged Agent
+Description=Nereus Privileged Agent (V2, Dev)
+Documentation=https://github.com/nereus/privileged-agent
 After=network.target
 
 [Service]
@@ -7,12 +8,43 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/home/he/workspace/python/NereusDoorLoongMagicPanel-backend
+
+# ── V2 安全配置（开发模式：允许 he 用户，公钥可选） ──
 Environment=NDLM_PRIVILEGED_AGENT_SOCKET=/run/ndlmpanel/privileged-agent.sock
 Environment=NDLM_PRIVILEGED_AGENT_SOCKET_GROUP=he
 Environment=NDLM_PRIVILEGED_AGENT_SOCKET_MODE=660
+Environment=NDLM_PRIVILEGED_AGENT_PUBKEY=/etc/nereus/ed25519_pub.pem
+Environment=NDLM_PRIVILEGED_AGENT_ALLOWED_UIDS=65534,1000
+Environment=NDLM_PRIVILEGED_AGENT_NONCE_TTL=300
+Environment=NDLM_PRIVILEGED_AGENT_TIMESTAMP_TOLERANCE=30
+
 ExecStart=/home/he/workspace/python/NereusDoorLoongMagicPanel-backend/.venv/bin/python -m privileged_agent.server
 Restart=always
 RestartSec=2
+
+# ── systemd 安全加固（开发模式稍宽松） ──
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+# 开发模式下允许写项目目录
+ProtectHome=no
+PrivateTmp=yes
+ProtectSystem=no
+ReadWritePaths=/run/ndlmpanel /home/he/workspace
+
+NoNewPrivileges=yes
+
+RuntimeDirectory=ndlmpanel
+RuntimeDirectoryMode=0750
+
+RemoveIPC=yes
+
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+MemoryMax=512M
+MemoryHigh=384M
 
 [Install]
 WantedBy=multi-user.target

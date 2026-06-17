@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import uuid
@@ -76,3 +77,62 @@ class PrivilegedAgentClient:
                 response.errorDetails,
             )
         return response.data
+
+    def call_v2(self, signed_request: dict) -> dict:
+        """发送 V2 签名请求到特权代理。
+
+        与 V1 call() 不同，V2 请求包含 Ed25519 签名，
+        由特权代理验签后执行。
+
+        Args:
+            signed_request: 包含 signature 字段的完整请求 dict
+                            （由 ElevationService.create_signed_request 生成）
+
+        Returns:
+            dict: 执行结果
+        """
+        raw_json = json.dumps(signed_request, ensure_ascii=False, separators=(",", ":"))
+        # debug: 确认 signature 字段是否在请求中
+        _has_sig = "signature" in signed_request
+        _sig_len = len(signed_request.get("signature", "")) if _has_sig else 0
+        _req_keys = list(signed_request.keys())
+        import logging as _logging
+        _logging.getLogger("privileged_agent_client").warning(
+            "call_v2: has_signature=%s sig_len=%d keys=%s json_len=%d",
+            _has_sig, _sig_len, _req_keys, len(raw_json),
+        )
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(self.timeout_seconds)
+                client.connect(self.socket_path)
+                client.sendall((raw_json + "\n").encode("utf-8"))
+                raw = b""
+                while not raw.endswith(b"\n"):
+                    chunk = client.recv(65536)
+                    if not chunk:
+                        break
+                    raw += chunk
+        except FileNotFoundError as exc:
+            raise PrivilegedAgentRemoteError("PROXY_UNAVAILABLE", "特权代理未启动", str(exc)) from exc
+        except PermissionError as exc:
+            raise PrivilegedAgentRemoteError("PROXY_PERMISSION_DENIED", "无权访问特权代理", str(exc)) from exc
+        except socket.timeout as exc:
+            raise PrivilegedAgentRemoteError("PROXY_TIMEOUT", "特权代理响应超时", str(exc)) from exc
+        except OSError as exc:
+            raise PrivilegedAgentRemoteError("PROXY_UNAVAILABLE", "无法连接特权代理", str(exc)) from exc
+
+        if not raw:
+            raise PrivilegedAgentRemoteError("PROXY_PROTOCOL_ERROR", "特权代理返回空响应")
+
+        try:
+            response = PrivilegedResponse.model_validate_json(raw.decode("utf-8"))
+        except Exception as exc:
+            raise PrivilegedAgentRemoteError("PROXY_PROTOCOL_ERROR", "特权代理响应格式非法", str(exc)) from exc
+
+        if not response.success:
+            raise PrivilegedAgentRemoteError(
+                response.errorCode or "PROXY_ERROR",
+                response.errorMessage or "特权代理执行失败",
+                response.errorDetails,
+            )
+        return response.data or {}

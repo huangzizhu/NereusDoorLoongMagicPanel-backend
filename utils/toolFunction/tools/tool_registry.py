@@ -69,6 +69,11 @@ RISK_LEVEL_MAP: dict[str, ToolRiskLevel] = {
     "generateProxyConfig": ToolRiskLevel.READ_ONLY,
     "testNginxConfig": ToolRiskLevel.READ_ONLY,
     "getNginxSiteList": ToolRiskLevel.READ_ONLY,
+    "getNginxSiteConfig": ToolRiskLevel.READ_ONLY,
+    "detectNginxLayout": ToolRiskLevel.READ_ONLY,
+    "searchDockerImages": ToolRiskLevel.READ_ONLY,
+    "testMysqlConnection": ToolRiskLevel.READ_ONLY,
+    "getMysqlDatabaseList": ToolRiskLevel.READ_ONLY,
     "checkDatabaseInstalled": ToolRiskLevel.READ_ONLY,
     "getDatabaseStatus": ToolRiskLevel.READ_ONLY,
     "getDirectoryTree": ToolRiskLevel.READ_ONLY,
@@ -113,6 +118,11 @@ RISK_LEVEL_MAP: dict[str, ToolRiskLevel] = {
     "manageSystemService": ToolRiskLevel.DANGEROUS,
     "autoCleanProcesses": ToolRiskLevel.DANGEROUS,
     "batchKillProcesses": ToolRiskLevel.DANGEROUS,
+    # ── 新增：DANGEROUS ──
+    "updateNginxSiteConfig": ToolRiskLevel.DANGEROUS,
+    "setDockerRegistryMirror": ToolRiskLevel.DANGEROUS,
+    "createMysqlDatabase": ToolRiskLevel.DANGEROUS,
+    "createMysqlUserAndGrant": ToolRiskLevel.DANGEROUS,
 }
 
 
