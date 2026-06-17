@@ -14,18 +14,19 @@ from agent.shared.types import AgentConfig
 _BUILTIN: dict[str, Any] = {
     "llm_provider": "deepseek",
     "llm_endpoint": "", "llm_model": "deepseek-v4-pro",
-    "llm_max_tokens": 65536, "safety_policy": "default",
+    "llm_max_tokens": 65536, "llm_context_window": 1048576, "safety_policy": "default",
     "execution_user": "osagent",
     "trace_db_path": os.path.join("runtime", "sqlite", "traces.db"),
     "max_tool_rounds": 0, "tool_timeout_seconds": 60,
     "max_tool_calls_per_round": 0,
+    "workspace_dir": "",
     "llm_temperature": 0.1, "llm_retry_count": 3, "llm_retry_delay": 2.0,
 }
 
 _ENV_MAP = {
     "LLM_PROVIDER": "llm_provider",
     "LLM_ENDPOINT": "llm_endpoint", "LLM_MODEL": "llm_model",
-    "LLM_MAX_TOKENS": "llm_max_tokens", "SAFETY_POLICY": "safety_policy",
+    "LLM_MAX_TOKENS": "llm_max_tokens", "LLM_CONTEXT_WINDOW": "llm_context_window", "SAFETY_POLICY": "safety_policy",
     "EXECUTION_USER": "execution_user", "TRACE_DB_PATH": "trace_db_path",
     "MAX_TOOL_ROUNDS": "max_tool_rounds",
     "MAX_TOOL_CALLS_PER_ROUND": "max_tool_calls_per_round",
@@ -35,7 +36,7 @@ _ENV_MAP = {
     "LLM_RETRY_DELAY": "llm_retry_delay",
 }
 
-_INT_FIELDS = {"llm_max_tokens", "max_tool_rounds", "max_tool_calls_per_round", "tool_timeout_seconds",
+_INT_FIELDS = {"llm_max_tokens", "llm_context_window", "max_tool_rounds", "max_tool_calls_per_round", "tool_timeout_seconds",
                "llm_retry_count"}
 _FLOAT_FIELDS = {"llm_temperature", "llm_retry_delay"}
 _AGENT_FIELDS = set(AgentConfig.__dataclass_fields__.keys())
@@ -169,3 +170,29 @@ def loadMcpServersFromProject() -> list[dict] | None:
         result.append(entry)
 
     return result if result else None
+
+
+def loadWorkspaceDirFromProject() -> str:
+    """从 pyproject.toml 读取 [tool.ndlmpanel-agent].workspace_dir。
+
+    Returns:
+        workspace_dir 字符串，未配置时返回 ""。
+    """
+    try:
+        import tomllib
+    except ImportError:
+        return ""
+
+    from ProjectRoot import getProjectRootPath
+
+    pyproject = getProjectRootPath() / "pyproject.toml"
+    if not pyproject.exists():
+        return ""
+
+    try:
+        with open(pyproject, "rb") as f:
+            data = tomllib.load(f)
+    except Exception:
+        return ""
+
+    return data.get("tool", {}).get("ndlmpanel-agent", {}).get("workspace_dir", "") or ""

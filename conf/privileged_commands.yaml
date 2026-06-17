@@ -138,3 +138,15 @@ commands:
   ls:
     description: 列出目录
     risk: read_only
+
+  # ── 双通道 ──
+  exec_arbitrary_cmd:
+    description: "Channel 1: 执行任意 shell 命令（Hash 锁定）"
+    risk: dangerous
+
+  exec_arbitrary_script:
+    description: "Channel 2: 执行 /opt/ndlmpanel/tmp_scripts/ 下的脚本（Hash 锁定）"
+    path_validation:
+      allowed_parents:
+        - /opt/ndlmpanel/tmp_scripts
+    risk: dangerous

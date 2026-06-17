@@ -21,6 +21,8 @@ dependencies = [
 ]
 
 [tool.ndlmpanel-agent]
+# Agent 工作区目录（空 = 自动推断为项目根目录下的 workspace/）
+workspace_dir = "/home/he/workspace/python/NereusDoorLoongMagicPanel-backend/workspace"
 tavily_api_key = "tvly-YOUR_API_KEY_HERE"
 
 [tool.ndlmpanel-agent.mcp-servers.ndlmpanel-mcp]

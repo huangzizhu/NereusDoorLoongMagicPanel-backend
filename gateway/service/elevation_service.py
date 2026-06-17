@@ -44,6 +44,10 @@ class ElevationCodeEntry:
         reason: str,
         ttl_seconds: int = 3600,
         max_ops: int = 10,
+        inline_cmd: str | None = None,
+        inline_cmd_hash: str | None = None,
+        script_path: str | None = None,
+        script_hash: str | None = None,
     ):
         self.code = code
         self.session_id = session_id
@@ -58,6 +62,12 @@ class ElevationCodeEntry:
         self.approved_at: Optional[float] = None
         self.token_id: Optional[str] = None
         self.reject_reason: Optional[str] = None
+        # 双通道（Channel 1）: 自由命令字符串 + Hash
+        self.inline_cmd: str | None = inline_cmd
+        self.inline_cmd_hash: str | None = inline_cmd_hash
+        # 双通道（Channel 2）: 脚本文件路径 + Hash
+        self.script_path: str | None = script_path
+        self.script_hash: str | None = script_hash
 
     @property
     def is_expired(self) -> bool:
@@ -84,6 +94,10 @@ class ElevationCodeEntry:
             "token_id": self.token_id,
             "expired": self.is_expired,
             "exhausted": self.is_exhausted,
+            "inline_cmd": self.inline_cmd,
+            "inline_cmd_hash": self.inline_cmd_hash,
+            "script_path": self.script_path,
+            "script_hash": self.script_hash,
         }
 
 
@@ -109,6 +123,11 @@ class JITToken:
         self.ops_used = 0
         self.issued_at = code_entry.approved_at or time()
         self.ttl_seconds = code_entry.ttl_seconds
+        # 双通道
+        self.inline_cmd: str | None = code_entry.inline_cmd
+        self.inline_cmd_hash: str | None = code_entry.inline_cmd_hash
+        self.script_path: str | None = code_entry.script_path
+        self.script_hash: str | None = code_entry.script_hash
 
     @property
     def is_expired(self) -> bool:
@@ -181,6 +200,10 @@ class ElevationService(Singleton):
         ttl_seconds: int = 3600,
         max_ops: int = 10,
         code: str | None = None,
+        inline_cmd: str | None = None,
+        inline_cmd_hash: str | None = None,
+        script_path: str | None = None,
+        script_hash: str | None = None,
     ) -> ElevationCodeEntry:
         """生成一个新的特权码。
 
@@ -191,6 +214,10 @@ class ElevationService(Singleton):
             ttl_seconds: 有效期（秒），默认 1 小时
             max_ops: 最大执行次数，默认 10
             code: 外部传入的 code 字符串（默认 None，自动生成）
+            inline_cmd: Channel 1 — 自由命令字符串
+            inline_cmd_hash: Channel 1 — SHA256(inline_cmd)
+            script_path: Channel 2 — 脚本文件路径
+            script_hash: Channel 2 — SHA256(script_content)
 
         Returns:
             ElevationCodeEntry (status=pending)
@@ -206,6 +233,10 @@ class ElevationService(Singleton):
             reason=reason,
             ttl_seconds=ttl_seconds,
             max_ops=max_ops,
+            inline_cmd=inline_cmd,
+            inline_cmd_hash=inline_cmd_hash,
+            script_path=script_path,
+            script_hash=script_hash,
         )
         with self._lock:
             # 如果该 session 已有 pending code，标记为过期
@@ -427,23 +458,47 @@ class ElevationService(Singleton):
 
             allowed_cmd = token.allowed_commands[command_index]
             command_name = allowed_cmd["command"]
-            expected_hash = allowed_cmd["args_hash"]
 
-            # 验证 args_hash
-            actual_hash = hash_payload({"args": actual_args})
-            if actual_hash != expected_hash:
-                _debug_lines.append(f"[DEBUG] ❌ ⑥ args_hash mismatch! command={command_name} expected={expected_hash} actual={actual_hash} args={actual_args}")
-                logger.warning(
-                    "token=%s command=%s args_hash mismatch (expected=%s, actual=%s)",
-                    token_id, command_name, expected_hash, actual_hash,
-                )
-                try:
-                    with open(_debug_path, "a") as _f:
-                        _f.write("\n".join(_debug_lines) + "\n")
-                except Exception:
-                    pass
-                return None
-            _debug_lines.append("[DEBUG] ✅ ⑥ args_hash match")
+            # ── 双通道 hash 验证 ──
+            cmd_hash = None
+            script_hash = None
+            if command_name == "exec_arbitrary_cmd":
+                # Channel 1: actual_args[0] 是完整命令字符串
+                inline_cmd = " ".join(actual_args) if actual_args else ""
+                cmd_hash = hash_payload({"cmd": inline_cmd})
+                expected_hash = token.inline_cmd_hash or ""
+                if cmd_hash != expected_hash:
+                    _debug_lines.append(f"[DEBUG] ❌ ⑥a cmd_hash mismatch! command={command_name} expected={expected_hash} actual={cmd_hash}")
+                    logger.warning("token=%s cmd_hash mismatch", token_id)
+                    try:
+                        with open(_debug_path, "a") as _f:
+                            _f.write("\n".join(_debug_lines) + "\n")
+                    except Exception:
+                        pass
+                    return None
+                _debug_lines.append("[DEBUG] ✅ ⑥a cmd_hash match")
+            elif command_name == "exec_arbitrary_script":
+                # Channel 2: actual_args[0] 是脚本路径
+                script_path = actual_args[0] if actual_args else ""
+                script_hash = token.script_hash or ""
+                _debug_lines.append(f"[DEBUG] ✅ ⑥b script_path={script_path} script_hash={script_hash[:16]}…")
+            else:
+                # 标准 V2 命令: 验证 args_hash
+                expected_hash = allowed_cmd["args_hash"]
+                actual_hash = hash_payload({"args": actual_args})
+                if actual_hash != expected_hash:
+                    _debug_lines.append(f"[DEBUG] ❌ ⑥ args_hash mismatch! command={command_name} expected={expected_hash} actual={actual_hash} args={actual_args}")
+                    logger.warning(
+                        "token=%s command=%s args_hash mismatch (expected=%s, actual=%s)",
+                        token_id, command_name, expected_hash, actual_hash,
+                    )
+                    try:
+                        with open(_debug_path, "a") as _f:
+                            _f.write("\n".join(_debug_lines) + "\n")
+                    except Exception:
+                        pass
+                    return None
+                _debug_lines.append("[DEBUG] ✅ ⑥ args_hash match")
 
             try:
                 with open(_debug_path, "a") as _f:
@@ -454,18 +509,21 @@ class ElevationService(Singleton):
             # 扣减
             token.ops_used += 1
 
-            # 准备签名 payload
+            # 准备签名 payload（含双通道字段）
             nonce = str(uuid.uuid4())
             timestamp = datetime.now(timezone.utc).isoformat()
             sig_payload = {
                 "requestId": f"v2-{uuid.uuid4()}",
                 "command": command_name,
                 "args": actual_args,
-                "args_hash": actual_hash,
+                "args_hash": hash_payload({"args": actual_args}),
                 "token_id": token_id,
                 "session_id": session_id,
                 "timestamp": timestamp,
                 "nonce": nonce,
+                "cmd_hash": cmd_hash or "",
+                "script_path": actual_args[0] if command_name == "exec_arbitrary_script" and actual_args else "",
+                "script_hash": script_hash or "",
             }
             signature = sign(sig_payload, self._priv_key)
 

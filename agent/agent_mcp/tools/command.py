@@ -11,15 +11,41 @@ from typing import Any
 _RECENT_COMMAND_RESULTS: list[dict[str, Any]] = []
 _MAX_RECENT_COMMAND_RESULTS = 20
 
+# ── Agent 工作区路径（项目根目录下的 workspace/）──
+_WORKSPACE_DIR: str = "."
+
+
+def _initWorkspaceDir() -> str:
+    """计算并返回 workspace 目录路径。"""
+    import os as _os
+
+    root = _os.path.dirname(_os.path.dirname(
+        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+    ws = _os.path.join(root, "workspace")
+    _os.makedirs(ws, exist_ok=True)
+    return ws
+
+
+def _getWorkspaceDir() -> str:
+    """获取 workspace 目录路径（惰性初始化）。"""
+    global _WORKSPACE_DIR
+    if _WORKSPACE_DIR == ".":
+        _WORKSPACE_DIR = _initWorkspaceDir()
+    return _WORKSPACE_DIR
+
 
 def runCommand(
     command: list[str],
-    cwd: str = ".",
+    cwd: str | None = None,
     timeoutSeconds: int = 30,
     env: dict[str, str] | None = None,
     maxOutputBytes: int = 65536,
 ) -> dict[str, Any]:
-    """Default command tool: run argv with no shell parsing. Use for tests, builds, scripts, and simple commands; it does not support pipes, redirects, globs, variables, command substitution, or &&/|| unless you explicitly invoke a shell yourself."""
+    """Default command tool: run argv with no shell parsing. Use for tests, builds, scripts, and simple commands; it does not support pipes, redirects, globs, variables, command substitution, or &&/|| unless you explicitly invoke a shell yourself.
+    
+    Args:
+        cwd: 工作目录。默认为 Agent workspace 目录（项目根目录下的 workspace/）。
+    """
     if not command:
         raise ValueError("command must not be empty")
     if not all(isinstance(part, str) and part for part in command):
@@ -27,7 +53,7 @@ def runCommand(
 
     return _runProcess(
         command=command,
-        cwd=cwd,
+        cwd=cwd or _getWorkspaceDir(),
         timeoutSeconds=timeoutSeconds,
         env=env,
         maxOutputBytes=maxOutputBytes,
@@ -38,18 +64,22 @@ def runCommand(
 
 def runShellCommand(
     command: str,
-    cwd: str = ".",
+    cwd: str | None = None,
     timeoutSeconds: int = 30,
     env: dict[str, str] | None = None,
     maxOutputBytes: int = 65536,
 ) -> dict[str, Any]:
-    """Advanced shell tool: run one command string through bash -lc. Use only when shell features are required, such as pipes, redirects, globs, variables, command substitution, or &&/|| chains; prefer runCommand for normal argv-style commands."""
+    """Advanced shell tool: run one command string through bash -lc. Use only when shell features are required, such as pipes, redirects, globs, variables, command substitution, or &&/|| chains; prefer runCommand for normal argv-style commands.
+    
+    Args:
+        cwd: 工作目录。默认为 Agent workspace 目录（项目根目录下的 workspace/）。
+    """
     if not command.strip():
         raise ValueError("command must not be empty")
 
     return _runProcess(
         command=["bash", "-lc", command],
-        cwd=cwd,
+        cwd=cwd or _getWorkspaceDir(),
         timeoutSeconds=timeoutSeconds,
         env=env,
         maxOutputBytes=maxOutputBytes,

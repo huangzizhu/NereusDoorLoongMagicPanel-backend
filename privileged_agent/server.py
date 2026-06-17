@@ -12,6 +12,7 @@ import grp
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import struct
@@ -214,7 +215,8 @@ class PrivilegedAgentServer:
 
         签名内容 = canonical_json({
             "requestId", "command", "args", "args_hash",
-            "token_id", "session_id", "timestamp", "nonce"
+            "token_id", "session_id", "timestamp", "nonce",
+            "cmd_hash", "script_path", "script_hash"
         })
 
         Returns:
@@ -235,6 +237,9 @@ class PrivilegedAgentServer:
             "session_id": req.session_id,
             "timestamp": req.timestamp,
             "nonce": req.nonce,
+            "cmd_hash": req.cmd_hash,
+            "script_path": req.script_path,
+            "script_hash": req.script_hash,
         }
         return verify(sig_payload, req.signature, self._pub_key)
 
@@ -347,12 +352,127 @@ class PrivilegedAgentServer:
             self._run_command(["systemctl", "restart", "docker"])
             return {"serviceName": "docker", "action": "restart", "isRestarted": True}
 
+                # ── 双通道 Channel 1: 任意命令执行 ──
+        if command == "exec_arbitrary_cmd":
+            inline_cmd_line = " ".join(args) if args else ""
+            self.logger.info("Channel 1 执行任意命令: %s", inline_cmd_line[:120])
+            result = self._run_command(["/bin/bash", "-c", inline_cmd_line])
+            return {
+                "command": command,
+                "stdout": (result.stdout or "").strip(),
+                "stderr": (result.stderr or "").strip(),
+                "returnCode": result.returncode,
+            }
+
+        # ── 双通道 Channel 2: 脚本执行 + Trojan Horse 预检 ──
+        if command == "exec_arbitrary_script":
+            script_path = args[0] if args else ""
+            self.logger.info("Channel 2 执行脚本: %s", script_path)
+            return self._run_script(script_path)
+
         # 不支持的 V2 命令
         raise PrivilegedAgentActionError(
             PrivilegedErrorCode.UNKNOWN_ACTION,
             f"V2 命令 '{command}' 未实现执行逻辑",
             command,
         )
+
+    # ── Trojan Horse 黑名单正则（脚本内容静态预检用） ──
+
+    _SCRIPT_BLACKLIST: list[tuple[re.Pattern, str]] = [
+        (re.compile(r'\beval\b'), "eval 动态执行"),
+        (re.compile(r'\bexec\s+\S'), "exec 替换进程"),
+        (re.compile(r'\bsource\s+\S'), "source 加载外部脚本"),
+        (re.compile(r'\.\s+[a-zA-Z0-9_/]'), ". 点号加载脚本"),
+        (re.compile(r'\bcurl\b.*\|\s*(ba|z|k)?sh\b', re.IGNORECASE), "curl 管道执行"),
+        (re.compile(r'\bwget\b.*\|\s*(ba|z|k)?sh\b', re.IGNORECASE), "wget 管道执行"),
+        (re.compile(r'\|\s*ba[sz]h\b'), "管道传给 bash"),
+        (re.compile(r'\|\s*sh\b'), "管道传给 sh"),
+        (re.compile(r'\bnc\b\s+.*\-e\b', re.IGNORECASE), "netcat 反弹 shell"),
+        (re.compile(r'\bnetcat\b.*\-e\b', re.IGNORECASE), "netcat 反弹 shell"),
+    ]
+
+    def _scan_script_content(self, content: str) -> list[dict]:
+        """对脚本内容进行静态 Trojan Horse 黑名单扫描。
+
+        Returns:
+            命中列表: [{"pattern": "eval 动态执行", "line": 5, "snippet": "eval $cmd"}, ...]
+            空列表: 全部通过
+        """
+        hits = []
+        lines = content.splitlines()
+        for i, line in enumerate(lines, 1):
+            for pattern, desc in self._SCRIPT_BLACKLIST:
+                if pattern.search(line):
+                    hits.append({
+                        "pattern": desc,
+                        "line": i,
+                        "snippet": line.strip()[:80],
+                    })
+                    break  # 每行只报告第一个命中
+        return hits
+
+    def _run_script(self, script_path: str) -> dict[str, Any]:
+        """执行 Channel 2 脚本，含 Trojan Horse 预检。
+
+        流程:
+          1. 确认文件存在
+          2. 读取文件，进行 Trojan Horse 正则扫描
+          3. 如果命中黑名单，记录日志并拒绝执行
+          4. 用 SAFE_ENV 最小环境 + /bin/bash 执行
+
+        Args:
+            script_path: 脚本文件的绝对路径
+
+        Returns:
+            执行结果 dict
+
+        Raises:
+            PrivilegedAgentActionError: 文件不存在 / 黑名单命中 / 执行失败
+        """
+        path = Path(script_path)
+        if not path.exists():
+            raise PrivilegedAgentActionError(
+                PrivilegedErrorCode.SCRIPT_NOT_FOUND,
+                "脚本文件不存在",
+                script_path,
+            )
+
+        content = path.read_text(encoding="utf-8", errors="ignore")
+
+        # ── Trojan Horse 静态预检 ──
+        hits = self._scan_script_content(content)
+        if hits:
+            hit_details = "; ".join(
+                f"L{h['line']}: {h['pattern']} → 「{h['snippet']}」"
+                for h in hits
+            )
+            self.logger.warning(
+                "脚本 Trojan Horse 检测命中: %s [%s]", script_path, hit_details
+            )
+            raise PrivilegedAgentActionError(
+                PrivilegedErrorCode.SCRIPT_BLACKLIST_HIT,
+                "脚本包含可疑/恶意指令，已拒绝执行",
+                hit_details,
+            )
+
+        self.logger.info("脚本 Trojan Horse 扫描通过: %s (%d lines)", script_path, len(content.splitlines()))
+
+        # ── 用 SAFE_ENV 最小化环境执行 ──
+        result = subprocess.run(
+            ["/bin/bash", script_path],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=SAFE_ENV,
+        )
+        return {
+            "command": "exec_arbitrary_script",
+            "script_path": script_path,
+            "stdout": (result.stdout or "").strip(),
+            "stderr": (result.stderr or "").strip(),
+            "returnCode": result.returncode,
+        }
 
     # ════════════════════════════════════════════════════════════
     #  V1: 安全的命令执行（SAFE_ENV）
@@ -814,19 +934,59 @@ class PrivilegedAgentServer:
                 f"命令参数校验失败", str(exc),
             )
 
-        # 7. Args hash 验证（如果 token 绑定了 args_hash）
-        if req.token_id and req.args_hash:
-            computed_hash = hash_payload({"args": req.args})
-            if computed_hash != req.args_hash:
-                self.logger.warning(
-                    "audit_id=%s uid=%d command=%s args_hash_mismatch "
-                    "expected=%s computed=%s",
-                    audit_id, uid, req.command, req.args_hash, computed_hash,
-                )
-                return self._build_error_response(
-                    audit_id, PrivilegedErrorCode.ARGS_HASH_MISMATCH,
-                    "参数 Hash 不匹配（请求参数与审批时不一致）",
-                )
+        # 7. Hash 验证（根据命令类型选择验证方式）
+        if req.token_id:
+            if req.command == "exec_arbitrary_cmd":
+                # Channel 1: 验证 cmd_hash — 命令字符串的完整 Hash
+                cmd_line = " ".join(req.args)
+                computed_cmd_hash = hash_payload({"cmd": cmd_line})
+                if not req.cmd_hash or computed_cmd_hash != req.cmd_hash:
+                    self.logger.warning(
+                        "audit_id=%s uid=%d command=exec_arbitrary_cmd cmd_hash_mismatch "
+                        "expected=%s computed=%s",
+                        audit_id, uid, req.cmd_hash, computed_cmd_hash,
+                    )
+                    return self._build_error_response(
+                        audit_id, PrivilegedErrorCode.CMD_HASH_MISMATCH,
+                        "命令 Hash 不匹配（执行命令与审批时不一致）",
+                    )
+            elif req.command == "exec_arbitrary_script":
+                # Channel 2: 验证 script_hash — 脚本文件内容的 Hash
+                try:
+                    script_content = Path(req.script_path).read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
+                    computed_script_hash = hash_payload({"content": script_content})
+                except (OSError, FileNotFoundError):
+                    return self._build_error_response(
+                        audit_id, PrivilegedErrorCode.SCRIPT_NOT_FOUND,
+                        "脚本文件不存在",
+                        req.script_path,
+                    )
+                if req.script_hash and computed_script_hash != req.script_hash:
+                    self.logger.warning(
+                        "audit_id=%s uid=%d command=exec_arbitrary_script script_hash_mismatch "
+                        "expected=%s computed=%s",
+                        audit_id, uid, req.script_hash, computed_script_hash,
+                    )
+                    return self._build_error_response(
+                        audit_id, PrivilegedErrorCode.SCRIPT_HASH_MISMATCH,
+                        "脚本 Hash 不匹配（执行脚本与审批时不一致）",
+                    )
+            else:
+                # 标准 V2 命令: 验证 args_hash
+                if req.args_hash:
+                    computed_hash = hash_payload({"args": req.args})
+                    if computed_hash != req.args_hash:
+                        self.logger.warning(
+                            "audit_id=%s uid=%d command=%s args_hash_mismatch "
+                            "expected=%s computed=%s",
+                            audit_id, uid, req.command, req.args_hash, computed_hash,
+                        )
+                        return self._build_error_response(
+                            audit_id, PrivilegedErrorCode.ARGS_HASH_MISMATCH,
+                            "参数 Hash 不匹配（请求参数与审批时不一致）",
+                        )
 
         # 8. 执行命令
         try:

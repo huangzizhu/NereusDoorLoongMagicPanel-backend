@@ -26,6 +26,7 @@ from pojo.Common import ListResponse
 
 class AgentLlmProfileService(Singleton):
     MAX_LLM_TOKENS = 393216
+    MAX_CONTEXT_WINDOW = 10485760
 
     @singletonInit
     def __init__(self):
@@ -61,6 +62,7 @@ class AgentLlmProfileService(Singleton):
                     credentialId=request.credentialId,
                     model=model,
                     maxTokens=request.maxTokens,
+                    contextWindow=request.contextWindow,
                     temperature=request.temperature,
                     retryCount=request.retryCount,
                     retryDelay=request.retryDelay,
@@ -177,6 +179,7 @@ class AgentLlmProfileService(Singleton):
             llm_endpoint=credential.baseUrl,
             llm_model=profile.model,
             llm_max_tokens=min(self._normalizeMaxTokens(profile.maxTokens), 32),
+            llm_context_window=self._normalizeContextWindow(profile.contextWindow),
             llm_temperature=0.0,
             llm_retry_count=0,
             llm_retry_delay=0.0,
@@ -233,6 +236,7 @@ class AgentLlmProfileService(Singleton):
             llm_endpoint=credential.baseUrl,
             llm_model=profile.model,
             llm_max_tokens=self._normalizeMaxTokens(profile.maxTokens),
+            llm_context_window=self._normalizeContextWindow(profile.contextWindow),
             llm_temperature=profile.temperature,
             llm_retry_count=profile.retryCount,
             llm_retry_delay=profile.retryDelay,
@@ -299,6 +303,12 @@ class AgentLlmProfileService(Singleton):
         if maxTokens is None:
             return 4096
         return max(1, min(int(maxTokens), cls.MAX_LLM_TOKENS))
+
+    @classmethod
+    def _normalizeContextWindow(cls, contextWindow: int | None) -> int:
+        if contextWindow is None:
+            return 1048576
+        return max(256, min(int(contextWindow), cls.MAX_CONTEXT_WINDOW))
 
     @staticmethod
     def _candidateModelUrls(baseUrl: str) -> list[str]:

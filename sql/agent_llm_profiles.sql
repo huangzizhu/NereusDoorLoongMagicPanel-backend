@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS agent_llm_profiles (
     credentialId INTEGER NOT NULL,
     model TEXT NOT NULL,
     maxTokens INTEGER DEFAULT 4096,
+    contextWindow INTEGER DEFAULT 1048576,
     temperature REAL DEFAULT 0.1,
     retryCount INTEGER DEFAULT 3,
     retryDelay REAL DEFAULT 2.0,

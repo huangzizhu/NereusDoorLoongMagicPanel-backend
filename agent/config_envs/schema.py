@@ -16,6 +16,8 @@ def validateConfig(config: AgentConfig) -> list[str]:
         issues.append("tool_timeout_seconds 必须在 1-600 之间")
     if not 256 <= config.llm_max_tokens <= 262144:
         issues.append("llm_max_tokens 必须在 256-262144 之间")
+    if not 256 <= config.llm_context_window <= 10485760:
+        issues.append("llm_context_window 必须在 256-10485760 之间")
     if not config.execution_user:
         issues.append("execution_user 不能为空")
     if not 0.0 <= config.llm_temperature <= 2.0:

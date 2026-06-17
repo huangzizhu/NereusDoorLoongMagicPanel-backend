@@ -152,8 +152,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "manageSystemServicePrivileged": "Inspect or change an allowed systemd service through the privileged agent for non-status actions.",
     "writePrivilegedFile": "Write a file to a privileged path (whitelist protected: nginx/var/www/docker etc.). Requires reason for approval.",
     "nginxWriteStaticFile": "Write a static file (html/css/js) to Nginx webroot (/etc/nginx/html/ or /var/www/). Requires reason for approval.",
-    "submitElevation": "Submit a privilege elevation request. Generates a one-time approval code that the admin must approve via 'sudo nereus approve <CODE>'. Use this when a command needs root/high privileges that the current process doesn't have.",
-    "runPrivileged": "Execute a privileged command using an approved elevation token. Call this after the admin has approved the elevation code.",
+    "submitElevation": "Submit a privilege elevation request. Generates a one-time approval code that the admin must approve via 'sudo nereus approve <CODE>'. Supports three mutually exclusive channels: (A) commands=[] for preset/registered commands, (B) inline_cmd='...' for arbitrary shell one-liner, (C) script_path='/opt/ndlmpanel/tmp_scripts/xxx.sh' for pre-written scripts. Priority: inline_cmd > script_path > commands. After admin approves, use runPrivileged() to execute.",
+    "runPrivileged": "Execute a privileged command using an approved elevation token. Must call after the admin approved the elevation code.",
 }
 
 TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
@@ -576,25 +576,48 @@ def _truncate(value: str, maxLength: int) -> str:
 
 
 def submitElevation(
-    session_id: str,
-    commands: list[dict[str, Any]],
-    reason: str,
+    commands: list[dict[str, Any]] | None = None,
+    reason: str = "",
     ttl_seconds: int = 3600,
     max_ops: int = 10,
+    inline_cmd: str = "",
+    script_path: str = "",
+    session_id: str = "",
 ) -> dict:
     """提交特权提权申请。生成一个一次性审批码，管理员需在 SSH 中执行
-    `sudo nereus approve <CODE>` 批准。
+    `sudo nereus approve <CODE>` 批准。批准后使用 runPrivileged() 执行。
 
+    支持三种互斥的提权通道（按优先级 inline_cmd > script_path > commands）:
+
+    选择决策:
+    ├─ 操作是已注册的稳定命令（mkdir/chown/cp/rm等）→ 通道A
+    ├─ 操作是一次性 shell 命令（管道/变量/重定向） → 通道B
+    └─ 操作复杂需多步逻辑/条件/循环 → 先写脚本到 /opt/ndlmpanel/tmp_scripts/, 再通道C
+
+    **通道 A — 预设命令（commands）**:
+    高频稳定操作，使用注册命令列表:
+    submitElevation(commands=[{"command": "mkdir", "args": ["-p", "/var/www/app"]}])
+
+    **通道 B — 自由命令（inline_cmd）**:
+    一次性任意 shell 命令，支持管道、变量、重定向:
+    submitElevation(inline_cmd="tar -czf /var/www/backup.tar.gz /var/www/html")
+
+    **通道 C — 自由脚本（script_path）**:
+    复杂多步操作，先用 writePrivilegedFile 写脚本到 /opt/ndlmpanel/tmp_scripts/, 再提交:
+    submitElevation(script_path="/opt/ndlmpanel/tmp_scripts/migrate_logs.sh")
+
+    ⚠ 三通道互斥：不要同时传 commands 和 inline_cmd，inline_cmd 优先。
+    ⚠ inline_cmd 和 script_path 会触发 AI 安全审计（管理员可见完整命令/脚本）。
     ⚠ MCP 子进程不存储任何状态。code 由工具生成后返回，
-    由 Gateway 进程的 _handleElevationResult 同步到 ElevationService。
+      由 Gateway 进程的 _handleElevationResult 同步到 ElevationService。
 
     Args:
-        session_id: 当前 Agent session ID
-        commands: 需要特权执行的命令列表
-                  [{"command": "mkdir", "args": ["-p", "/var/www/test"]}, ...]
+        commands: [通道A] 注册命令列表 [{"command": "mkdir", "args": [...]}, ...]
         reason: 申请原因说明（显示给管理员）
         ttl_seconds: code 有效期（秒），默认 1 小时
         max_ops: 批准后最大执行次数，默认 10
+        inline_cmd: [通道B] 完整的 shell 命令字符串
+        script_path: [通道C] 脚本文件路径（必须在 /opt/ndlmpanel/tmp_scripts/ 下）
 
     Returns:
         {"code": "NGA7-K3X9", "status": "pending", "commands": [...], ...}
@@ -602,14 +625,26 @@ def submitElevation(
     import secrets as _secrets
     _chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     _code = "".join(_secrets.choice(_chars) for _ in range(4)) + "-" + "".join(_secrets.choice(_chars) for _ in range(4))
-    # 归一化 command：LLM 可能传字符串或列表两种格式
+
     _normalized_commands = []
-    for _c in commands:
-        _cmd = _c["command"]
-        if isinstance(_cmd, list):
-            _cmd = " ".join(str(x) for x in _cmd)
-        _normalized_commands.append({"command": _cmd, "args": _c.get("args", [])})
-    return {
+
+    if inline_cmd:
+        # 通道 B：自由命令
+        _normalized_commands.append({"command": "exec_arbitrary_cmd", "args": [inline_cmd]})
+    elif script_path:
+        # 通道 C：脚本执行
+        _normalized_commands.append({"command": "exec_arbitrary_script", "args": [script_path]})
+    else:
+        # 通道 A：注册命令
+        if commands is None:
+            commands = []
+        for _c in commands:
+            _cmd = _c["command"]
+            if isinstance(_cmd, list):
+                _cmd = " ".join(str(x) for x in _cmd)
+            _normalized_commands.append({"command": _cmd, "args": _c.get("args", [])})
+
+    _result = {
         "code": _code,
         "status": "pending",
         "commands": _normalized_commands,
@@ -617,6 +652,11 @@ def submitElevation(
         "ttl_seconds": ttl_seconds,
         "max_ops": max_ops,
     }
+    if inline_cmd:
+        _result["inline_cmd"] = inline_cmd
+    if script_path:
+        _result["script_path"] = script_path
+    return _result
 
 
 def runPrivileged(

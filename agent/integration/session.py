@@ -59,7 +59,22 @@ class AgentSession:
         import os as _os
         root = _os.path.dirname(_os.path.dirname(_os.path.dirname(
             _os.path.dirname(_os.path.abspath(__file__)))))
-        sysPromptPath = _os.path.join(root, "conf", "prompts", "system", "v1.1.0.txt")
+
+        # ── Agent 工作区路径（优先从配置读取，兜底为项目根目录下的 workspace/）──
+        configured = getattr(config, "workspace_dir", "") or ""
+        if not configured:
+            try:
+                from agent.config_envs.loader import loadWorkspaceDirFromProject
+                configured = loadWorkspaceDirFromProject()
+            except Exception:
+                pass
+        if configured:
+            self._workspaceDir = configured
+        else:
+            self._workspaceDir = _os.path.join(root, "workspace")
+        _os.makedirs(self._workspaceDir, exist_ok=True)
+
+        sysPromptPath = _os.path.join(root, "conf", "prompts", "system", "v1.2.0.txt")
         safetyRulesPath = _os.path.join(root, "conf", "prompts", "safety", "rules_summary.txt")
 
         try:
@@ -75,6 +90,13 @@ class AgentSession:
                 safetyRules = f.read()
         except FileNotFoundError:
             safetyRules = ""
+
+        # ── 为 MCP 子进程注入默认 workspace cwd ──
+        if mcpServers and toolSource in ("stdio", "mcp_stdio", "stdio_mcp"):
+            mcpServers = [
+                {**s, "cwd": s.get("cwd") or self._workspaceDir}
+                for s in mcpServers
+            ]
 
         registry, dispatcher, self._stdioMcpBridge = self._buildToolBackend(
             toolSource,
@@ -103,6 +125,7 @@ class AgentSession:
             promptBuilder=promptBuilder,
             maxRounds=config.max_tool_rounds,
             maxTokens=config.llm_max_tokens,
+            contextWindow=config.llm_context_window,
             maxToolCallsPerRound=config.max_tool_calls_per_round,
             mode=self._mode,
         )

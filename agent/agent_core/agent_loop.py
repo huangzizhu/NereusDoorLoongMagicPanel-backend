@@ -95,6 +95,7 @@ class AgentCore:
         maxRounds: int = 0,
         approvalTimeout: float = 300.0,
         maxTokens: int = 60000,
+        contextWindow: int = 1048576,
         maxToolCallsPerRound: int = 0,
         mode: AgentMode = AgentMode.AGENT,
     ):
@@ -105,6 +106,7 @@ class AgentCore:
         self._promptBuilder = promptBuilder
         self._maxRounds = maxRounds
         self._maxTokens = maxTokens
+        self._contextWindow = contextWindow
         self._maxToolCallsPerRound = maxToolCallsPerRound
         self._approvalTimeout = approvalTimeout
         self._mode = mode
@@ -291,7 +293,7 @@ class AgentCore:
 
             if state == LoopState.THINKING:
                 # 上下文压缩（token 预算保护）
-                self._msgs = compressHistory(self._msgs, maxTokens=self._maxTokens)
+                self._msgs = compressHistory(self._msgs, maxTokens=self._contextWindow)
 
                 stream.emit(EventType.THINKING_START, {"round": roundCount})
                 self._trace(traceId, sessionId, "llm.request",

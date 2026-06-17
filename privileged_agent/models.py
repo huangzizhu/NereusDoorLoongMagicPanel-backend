@@ -41,6 +41,10 @@ class PrivilegedAction(StrEnum):
     # ── 执行预定义的运维脚本 ──
     EXEC_SCRIPT = "exec.allowed_script"
 
+    # ── 双通道模式 ──
+    EXEC_ARBITRARY_CMD = "exec.arbitrary_cmd"
+    EXEC_ARBITRARY_SCRIPT = "exec.arbitrary_script"
+
 
 class PrivilegedErrorCode(StrEnum):
     INVALID_REQUEST = "INVALID_REQUEST"
@@ -60,6 +64,12 @@ class PrivilegedErrorCode(StrEnum):
     PEER_UID_DENIED = "PEER_UID_DENIED"
     TOKEN_EXHAUSTED = "TOKEN_EXHAUSTED"
     RATE_LIMITED = "RATE_LIMITED"
+
+    # ── 双通道错误码 ──
+    CMD_HASH_MISMATCH = "CMD_HASH_MISMATCH"
+    SCRIPT_NOT_FOUND = "SCRIPT_NOT_FOUND"
+    SCRIPT_HASH_MISMATCH = "SCRIPT_HASH_MISMATCH"
+    SCRIPT_BLACKLIST_HIT = "SCRIPT_BLACKLIST_HIT"
 
 
 class PrivilegedRequestContext(BaseModel):
@@ -87,6 +97,11 @@ class PrivilegedV2Request(BaseModel):
     - session_id:      来源 agent session
     - signature:       Ed25519 签名，供特权代理验签
     - nonce:           防重放
+
+    双通道扩展字段（Channel 1 / Channel 2）:
+    - cmd_hash:        SHA256(inline_command_string) — Channel 1 hash 锁定
+    - script_path:     脚本文件路径 — Channel 2
+    - script_hash:     SHA256(script_file_content) — Channel 2 hash 锁定
     """
 
     requestId: str = Field(..., min_length=1, max_length=100)
@@ -103,6 +118,11 @@ class PrivilegedV2Request(BaseModel):
     timestamp: str = Field(..., description="ISO-8601 UTC")
     nonce: str = Field(..., min_length=8, max_length=128)
     signature: str = Field(..., min_length=1)
+
+    # 双通道字段
+    cmd_hash: str = Field(default="", max_length=128, description="Channel 1: SHA256(inline_command)")
+    script_path: str = Field(default="", max_length=512, description="Channel 2: path to script file")
+    script_hash: str = Field(default="", max_length=128, description="Channel 2: SHA256(script_content)")
 
 
 class PrivilegedResponse(BaseModel):

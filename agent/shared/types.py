@@ -127,6 +127,7 @@ class AgentConfig:
     llm_endpoint: str = ""
     llm_model: str = "deepseek-chat"
     llm_max_tokens: int = 4096
+    llm_context_window: int = 1048576
     safety_policy: str = "default"
     execution_user: str = "nobody"
     trace_db_path: str = "runtime/sqlite/traces.db"
@@ -137,6 +138,8 @@ class AgentConfig:
     llm_retry_count: int = 2          # 失败后重试次数（不含首次）
     llm_retry_delay: float = 1.0      # 重试基准间隔秒（指数退避基数）
     max_tool_calls_per_round: int = 0
+    # Agent 工作区目录（空 = 自动从文件路径推断为 workspace/）
+    workspace_dir: str = ""
     # 敏感字段：不进 repr、不应写配置文件
     llm_api_key: str = field(default="", repr=False)
 

@@ -19,10 +19,18 @@ CREATE TABLE IF NOT EXISTS elevation_audit_log (
     approved_by     VARCHAR(64),                     -- 谁 sudo approve 的
     reject_reason   VARCHAR(512),                    -- 拒绝原因
 
-    -- 审批内容摘要
+        -- 审批内容摘要
     commands_hash   VARCHAR(128),                    -- SHA256(commands_json)
     reason_hash     VARCHAR(128),                    -- SHA256(reason)
     command_count   INT NOT NULL DEFAULT 0,
+
+    -- 双通道（Channel 1 / Channel 2）
+    inline_cmd_hash     VARCHAR(128),                -- SHA256(inline_command)
+    script_hash         VARCHAR(128),                -- SHA256(script_content)
+
+    -- AI-SAST 审计结果
+    audit_result        TEXT,                        -- JSON 审计报告
+    audit_risk_level    VARCHAR(16),                 -- LOW/MEDIUM/HIGH/CRITICAL
 
     -- Token
     token_id        VARCHAR(64),                     -- 对应 JIT token
@@ -55,10 +63,17 @@ CREATE TABLE IF NOT EXISTS elevation_execution_log (
     exit_code       INT,
     duration_ms     INT,
 
+    -- 双通道记录
+    cmd_hash        VARCHAR(128),                    -- Channel 1: inline command hash
+    script_path     VARCHAR(512),                    -- Channel 2: script path
+    script_hash     VARCHAR(128),                    -- Channel 2: script content hash
+
     -- 安全验证结果
     verdict         ENUM('allowed', 'denied_signature', 'denied_registry',
                          'denied_args_hash', 'denied_nonce', 'denied_peercred',
-                         'denied_expired', 'denied_exhausted')
+                         'denied_expired', 'denied_exhausted',
+                         'denied_cmd_hash', 'denied_script_not_found',
+                         'denied_script_hash', 'denied_script_blacklist')
                     DEFAULT 'allowed',
 
     -- 时间

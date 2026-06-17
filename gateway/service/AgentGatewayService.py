@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import WebSocket
@@ -10,7 +11,6 @@ from fastapi import WebSocket
 from agent.agent_router.router import AgentMode
 from agent.integration.session import AgentSession as RuntimeAgentSession
 from agent.shared.types import AgentEvent, EventType
-from agent.config_envs.loader import loadConfig
 from agent.llm_providers.factory import createProvider
 from agent.shared.types import AgentConfig
 from gateway.Singleton import Singleton, singletonInit
@@ -18,6 +18,7 @@ from gateway.dao.AgentSessionDaoOrm import AgentSessionDaoOrm
 from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
 from gateway.service.AgentLlmProfileService import AgentLlmProfileService
 from gateway.service.elevation_service import ElevationService
+from gateway.utils.llm_utils import get_llm_config
 from pojo.Agent import AgentSessionCreate
 
 _logger = logging.getLogger("ndlmpanel.gateway")
@@ -510,61 +511,126 @@ class AgentGatewayService(Singleton):
 
     async def _autoGenerateTitle(self, sessionId: str, userMsg: str,
                                   response: str, session) -> None:
-        """首轮对话后异步生成标题（静默失败）。"""
+        """首轮对话后异步生成标题。
+
+        重要：不调 normalize_endpoint() — createProvider 靠检测 endpoint
+        中是否含 "/anthropic" 来自动选择 AnthropicProvider / OpenAIProvider。
+        归一化会移除该标记导致 Provider 选错 + 路径重复（404）。
+        """
         try:
-            # 获取当前 model 配置
-            profile = None
-            try:
-                profile = self.profileService.dao.getProfileById(session.profileId) if session.profileId else None
-            except Exception:
-                pass
-            if profile is None:
-                profile = self.profileService.dao.getDefaultProfile()
+            # ── 1. 获取 LLM 配置 ──
+            llm_cfg = get_llm_config(session)
+            endpoint = llm_cfg.get("endpoint", "")
+            api_key = llm_cfg.get("api_key", "")
+            model = llm_cfg.get("model", "deepseek-chat")
 
-            import os as _os
-            endpoint = ""
-            apiKey = ""
-            model = "deepseek-chat"
-            if profile:
-                cred = self.profileService.dao.getCredentialById(profile.credentialId) if profile.credentialId else None
-                if cred and cred.baseUrl:
-                    endpoint = cred.baseUrl
-                    apiKey = cred.apiKey
-                    model = profile.model
+            if not endpoint or not api_key:
+                _logger.warning(
+                    "自动标题生成: LLM 配置不完整, 使用 fallback。"
+                    "endpoint=%s api_key=%s", bool(endpoint), bool(api_key),
+                )
+                self._titleFallback(sessionId, userMsg)
+                return
 
-            if not endpoint:
-                # fallback: 从配置文件获取
-                try:
-                    cfg = loadConfig()
-                    endpoint = cfg.llm_endpoint
-                    model = cfg.llm_model
-                    apiKey = cfg.llm_api_key
-                except Exception:
-                    return
+            # ── 2. 规整化端点（Provider 兼容）──
+            # 规整规则：
+            #   Anthropic 端点 (.../anthropic) → 不动，createProvider 自动检测
+            #   DeepSeek 官方 (api.deepseek.com) → 裸域名，不用 /v1
+            #   其他 → 加 /v1（OpenAI 标准路径前缀）
+            # OpenAIProvider 内部会追加 /chat/completions，这里只给 BASE URL
+            raw_endpoint = endpoint
+            if "/anthropic" in endpoint:
+                pass  # 让 createProvider 检测 /anthropic → AnthropicProvider
+            elif "api.deepseek.com" in endpoint:
+                # DeepSeek 官方地址: https://api.deepseek.com/chat/completions
+                endpoint = "https://api.deepseek.com"
+            else:
+                endpoint = endpoint.rstrip("/")
+                # 去掉已存在的 /chat/completions（provider 会再加）
+                if endpoint.endswith("/chat/completions"):
+                    endpoint = endpoint[: -len("/chat/completions")]
+                # 确保有 /v1 前缀（其他厂商的 OpenAI 标准路径）
+                if not endpoint.endswith("/v1"):
+                    endpoint = endpoint + "/v1"
+
+            _logger.info(
+                "自动标题生成: raw_endpoint=%s -> normalized=%s model=%s is_anthropic=%s",
+                raw_endpoint[:80], endpoint[:80], model, "/anthropic" in raw_endpoint,
+            )
 
             titleConfig = AgentConfig(
                 llm_endpoint=endpoint,
                 llm_model=model,
-                llm_max_tokens=20,
+                llm_max_tokens=1000,
                 llm_temperature=0.0,
-                llm_retry_count=0,
-                llm_retry_delay=0.0,
+                llm_retry_count=1,
+                llm_retry_delay=1.0,
             )
-            titleConfig.llm_api_key = apiKey
+            titleConfig.llm_api_key = api_key
 
             provider = createProvider(titleConfig)
+            _logger.info(
+                "自动标题生成: provider=%s final_endpoint=%s",
+                type(provider).__name__,
+                getattr(provider, '_endpoint', '?'),
+            )
+
             resp = await provider.chat([
                 {"role": "system",
-                 "content": "根据对话内容生成一个简洁的对话标题（10字以内），只返回标题本身，不要加引号"},
+                 "content": "根据对话内容生成一个简洁的对话标题（10字~20字以内），只返回标题本身，不要加引号"},
                 {"role": "user", "content": f"用户：{userMsg[:200]}"},
             ])
             title = (resp.content or "").strip().strip('"').strip("'")
             if title and len(title) <= 100:
                 self.sessionDao.updateSessionTitle(sessionId, title)
-        except Exception:
-            import logging
-            logging.getLogger("ndlmpanel.gateway").debug(
-                "自动标题生成失败（静默忽略）", exc_info=True)
+                _logger.info(
+                    "自动标题生成成功: session=%s title=%s", sessionId, title,
+                )
+                # ── 推送标题更新事件到前端 ──
+                await self._pushTitleEvent(sessionId, title)
+            else:
+                self._titleFallback(sessionId, userMsg)
+                _logger.info(
+                    "自动标题生成: LLM 返回空标题, 使用 fallback。session=%s",
+                    sessionId,
+                )
+
+        except Exception as e:
+            _logger.warning(
+                "自动标题生成失败: %s, 使用 fallback。session=%s", e, sessionId,
+            )
+            self._titleFallback(sessionId, userMsg)
+
+    async def _titleFallback(self, sessionId: str, userMsg: str) -> None:
+        """标题生成 fallback：用用户消息前 20 字作为标题。"""
+        fallbackTitle = userMsg[:20].strip()
+        if fallbackTitle:
+            try:
+                self.sessionDao.updateSessionTitle(sessionId, fallbackTitle)
+                _logger.info(
+                    "标题 fallback 成功: session=%s title=%s",
+                    sessionId, fallbackTitle,
+                )
+                await self._pushTitleEvent(sessionId, fallbackTitle)
+            except Exception as e:
+                _logger.warning(
+                    "标题 fallback 写入失败: session=%s error=%s",
+                    sessionId, e,
+                )
+
+    async def _pushTitleEvent(self, sessionId: str, title: str) -> None:
+        """向前端推送标题更新事件。"""
+        pair = self._activeConns.get(sessionId)
+        if pair is None:
+            _logger.debug("_pushTitleEvent: session=%s 无活跃 WS 连接", sessionId)
+            return
+        websocket, sendLock = pair
+        try:
+            await self._send(websocket, sendLock, self._serverEvent(
+                "title.updated", sessionId, None, {"title": title},
+            ))
+        except Exception as e:
+            _logger.warning("_pushTitleEvent: session=%s 推送失败: %s", sessionId, e)
 
     def _getRuntimeSession(self, session) -> RuntimeAgentSession:
         runtime = self._runtimeSessions.get(session.sessionId)
@@ -684,26 +750,60 @@ class AgentGatewayService(Singleton):
         elevation = ElevationService()
         entry = elevation.get_code(code)
         if entry is None:
+            # 提取双通道字段
+            inline_cmd = result_data.get("inline_cmd", "")
+            script_path = result_data.get("script_path", "")
+
+            # 双通道 hash 计算（runPrivileged / 特权代理校验时使用）
+            from privileged_agent.crypto import hash_payload as _hash_payload
+            inline_cmd_hash = (
+                _hash_payload({"cmd": inline_cmd}) if inline_cmd else None
+            )
+            script_hash = None
+            if script_path:
+                try:
+                    _script_content = Path(script_path).read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
+                    script_hash = _hash_payload({"content": _script_content})
+                except (OSError, FileNotFoundError):
+                    _logger.warning(
+                        "script_hash: 无法读取脚本文件 %s，script_hash 将为空",
+                        script_path,
+                    )
+
             elevation.generate_code(
                 session_id=sessionId,
                 commands=commands,
                 reason=reason,
                 ttl_seconds=int(result_data.get("ttl_seconds", 3600)),
                 max_ops=int(result_data.get("max_ops", 10)),
-                code=code,  # 使用 MCP 子进程生成的 code，不重新随机生成
+                code=code,
+                inline_cmd=inline_cmd or None,
+                inline_cmd_hash=inline_cmd_hash,
+                script_path=script_path or None,
+                script_hash=script_hash,
             )
-            _logger.info("elevation: code=%s 已同步到 Gateway ElevationService", code)
+            _logger.info(
+                "elevation: code=%s 已同步到 Gateway ElevationService (inline=%s script=%s)",
+                code, bool(inline_cmd), bool(script_path),
+            )
 
         # 推送 WS 事件到前端
+        ws_data = {
+            "code": code,
+            "commands": commands,
+            "reason": reason,
+            "ttl_seconds": result_data.get("ttl_seconds", 3600),
+            "max_ops": result_data.get("max_ops", 10),
+            "message": f"Agent 请求特权操作，请在 SSH 执行: sudo nereus approve {code}",
+        }
+        if inline_cmd:
+            ws_data["inline_cmd"] = inline_cmd
+        if script_path:
+            ws_data["script_path"] = script_path
         await self._send(websocket, sendLock, self._serverEvent(
-            "elevation.requested", sessionId, tcData.get("trace_id"), {
-                "code": code,
-                "commands": commands,
-                "reason": reason,
-                "ttl_seconds": result_data.get("ttl_seconds", 3600),
-                "max_ops": result_data.get("max_ops", 10),
-                "message": f"Agent 请求特权操作，请在 SSH 执行: sudo nereus approve {code}",
-            }
+            "elevation.requested", sessionId, tcData.get("trace_id"), ws_data,
         ))
 
     @staticmethod

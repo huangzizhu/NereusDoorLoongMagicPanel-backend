@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel, Response
 from gateway.Singleton import singletonInit
+from gateway.service.audit_service import audit_commands, audit_script_content
 from gateway.service.elevation_service import ElevationService
 logger = logging.getLogger("admin_controller")
 
@@ -118,6 +119,7 @@ class AdminController(AbstractController):
                 "status": "approved",
                 "code": code,
                 "token_id": token.token_id,
+                "session_id": token.session_id,
                 "max_ops": token.max_ops,
                 "allowed_commands": token.allowed_commands,
             })
@@ -152,6 +154,57 @@ class AdminController(AbstractController):
                 return Response.error(msg="token 不存在或已过期")
 
             return Response.success(data={"status": "revoked", "token_id": token_id})
+
+        @self.router.get("/audit/{code}")
+        def audit_code(code: str) -> ResponseModel:
+            """AI 安全审计一个待审批的 code 中的命令/脚本。
+
+            返回结构化审计报告，CLI 用 rich Markdown 渲染。
+            """
+            print(f"[AUDIT_DEBUG] /audit/{code} 被调用", flush=True)
+            entry = self.elevation_service.get_code(code)
+            if entry is None:
+                print(f"[AUDIT_DEBUG] code={code} 不存在", flush=True)
+                return Response.error(msg="特权码不存在")
+            if entry.status != "pending":
+                return Response.error(msg=f"code 状态不是 pending (当前: {entry.status})")
+
+            commands = entry.commands
+            script_content = None
+
+            # 检测脚本通道（script_path 指定了脚本文件）
+            if entry.script_path:
+                script_path_obj = Path(entry.script_path)
+                if script_path_obj.exists():
+                    try:
+                        script_content = script_path_obj.read_text(encoding="utf-8", errors="ignore")
+                    except OSError:
+                        pass
+
+            # 执行审计
+            print(f"[AUDIT_DEBUG] 开始审计: script_content={bool(script_content)} commands={len(commands)}条", flush=True)
+            try:
+                if script_content:
+                    audit = audit_script_content(script_content, entry.script_path or "")
+                else:
+                    audit = audit_commands(commands)
+                print(f"[AUDIT_DEBUG] 审计完成: risk_level={audit.get('risk_level')} ai_advice={audit.get('ai_advice','')[:30]}", flush=True)
+            except Exception as exc:
+                logger.exception("AI-SAST 审计异常")
+                audit = {
+                    "risk_level": "MEDIUM",
+                    "summary": "AI 审计执行异常，已降级为规则扫描",
+                    "findings": [{"severity": "warning", "description": f"审计异常: {exc}", "code_snippet": "", "recommendation": "请人工审核"}],
+                    "dangerous_commands": [],
+                    "network_requests": False,
+                    "nested_execution": False,
+                    "ai_advice": "审计异常，请人工审核",
+                }
+
+            return Response.success(data={
+                "code": code,
+                "audit": audit,
+            })
 
         @self.router.get("/history")
         def list_history(limit: int = 50) -> ResponseModel:

@@ -13,6 +13,7 @@ class AgentLlmProfileOrm(OrmEngine().getBase()):
     credentialId = Column(Integer, ForeignKey("api_credentials.credentialId"), nullable=False)
     model = Column(String(100), nullable=False)
     maxTokens = Column(Integer, default=4096)
+    contextWindow = Column(Integer, default=1048576)
     temperature = Column(Float, default=0.1)
     retryCount = Column(Integer, default=3)
     retryDelay = Column(Float, default=2.0)

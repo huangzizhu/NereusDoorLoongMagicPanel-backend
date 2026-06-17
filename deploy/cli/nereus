@@ -61,7 +61,7 @@ def api_get(path: str) -> dict:
     url = f"{API_BASE}{API_PREFIX}{path}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
@@ -234,10 +234,13 @@ def cmd_approve(code: str):
 
     流程:
       1. 查询 code 信息
-      2. 显示待审批命令
-      3. （通道 B）触发 AI 安全审计 → 显示报告 → 强制预览
+      2. 显示待审批命令（支持双通道 inline_cmd / script_path）
+      3. 触发 AI 安全审计 → 显示 rich Markdown 报告
       4. 管理员确认 → 批准
     """
+    if os.geteuid() != 0:
+        die("approve 需要 root 权限（sudo）")
+
     # 1. 查询 code 信息
     result = api_get(f"/codes/{code}")
     if not _is_success(result):
@@ -248,7 +251,10 @@ def cmd_approve(code: str):
         die(f"code {code} 状态不是 pending (当前: {data.get('status')})")
 
     commands = data.get("commands", [])
+    inline_cmd = data.get("inline_cmd", "")
+    script_path = data.get("script_path", "")
     has_multiple = len(commands) > 1
+    is_dual_channel = bool(inline_cmd) or bool(script_path)
 
     # 2. 显示待审批信息
     print("\n" + "=" * 60)
@@ -257,28 +263,43 @@ def cmd_approve(code: str):
     print(f"  Session:  {data.get('session_id', '?')}")
     print(f"  原因:     {data.get('reason', '?')}")
     print(f"  请求者:   AI Agent")
-    print()
-    print(f"  将批准以下操作:")
-    for i, cmd in enumerate(commands, 1):
-        cmd_name = cmd.get("command", "?")
-        cmd_args = " ".join(str(a) for a in cmd.get("args", []))
-        print(f"    {i}. {cmd_name} {cmd_args}")
+
+    # 通道提示
+    if inline_cmd:
+        print(f"\n  ── 📝 Channel 1: 自由命令 ──")
+        print(f"  命令: {inline_cmd}")
+    elif script_path:
+        print(f"\n  ── 📜 Channel 2: 脚本执行 ──")
+        print(f"  脚本路径: {script_path}")
+    else:
+        print()
+        print(f"  将批准以下操作:")
+        for i, cmd in enumerate(commands, 1):
+            cmd_name = cmd.get("command", "?")
+            cmd_args = " ".join(str(a) for a in cmd.get("args", []))
+            print(f"    {i}. {cmd_name} {cmd_args}")
+
     print()
     ttl = data.get("ttl_seconds", 3600)
     max_ops = data.get("max_ops", 10)
     print(f"  有效期: {ttl // 60} 分钟  |  操作次数上限: {max_ops} 次")
     print()
 
-    # 3. 通道 B（多命令/脚本）→ AI 审计
-    if has_multiple:
+    # 3. AI 安全审计（对所有高风险操作执行）
+    #    多命令 / 双通道 / 脚本 都触发审计
+    if has_multiple or inline_cmd or script_path:
         print("  ── 正在进行 AI 安全审计 ──")
         print()
-        audit_result = api_get(f"/audit/{code}")
-        if _is_success(audit_result):
-            audit = audit_result.get("data", {}).get("audit", {})
-            _display_audit_report(audit)
-        else:
-            print("  ⚠️  AI 审计不可用，请人工审查")
+        try:
+            audit_result = api_get(f"/audit/{code}")
+            if _is_success(audit_result):
+                audit = audit_result.get("data", {}).get("audit", {})
+                _display_audit_report(audit)
+            else:
+                print("  ⚠️  AI 审计不可用，请人工审查")
+                print()
+        except Exception:
+            print("  ⚠️  AI 审计请求失败，请人工审查")
             print()
 
         # 强制预览提示
@@ -308,6 +329,7 @@ def cmd_approve(code: str):
     print()
     print(f"✅ 已批准！Agent 可执行")
     print(f"   Token ID: {data.get('token_id', '?')}")
+    print(f"   Session:  {data.get('session_id', '?')}")
     print(f"   最大执行: {data.get('max_ops', '?')} 次")
 
 
