@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List
 import re
 import subprocess
-from pojo.FireWall import PortRuleCreate,PortRule, SshConfig,SshConfigUpdate
+from pojo.FireWall import PortRuleCreate,PortRule, SshConfig,SshConfigUpdate,SshLogBase
 from pathlib import Path
 from ndlmpanel_agent import (
     getFirewallStatus,
@@ -69,6 +69,73 @@ class FirewallService(Singleton):
             sshServiceEnabled=self.readSshServiceEnabled(),
         )
 
+    def getSshLogBase(self,)->List[SshLogBase]:
+        #获取日志
+        mainSshLogBasePath=Path("/var/log/auth.log")
+        if not mainSshLogBasePath.exists():
+            mainSshLogBasePath = Path("/var/log/secure")
+        
+        try:
+            if not mainSshLogBasePath.exists():
+                raise FileExistsError(f"SSH日志文件不存在:{mainSshLogBasePath}")
+            lines:List[str] = []
+            try:
+                with open(mainSshLogBasePath,"r",encoding="utf-8",errors="ignore")as f:
+                    lines = [line.strip() for line in f.readlines() if line.strip()]
+            except PermissionError:
+                res= subprocess.run(["sudo","-n","tail","-n","500",str(mainSshLogBasePath)],capture_output=True,text=True,check=False,)
+                if res.returncode !=0:
+                    raise PermissionError(res.stderr or "读取日志权限不够")
+                lines = [line.strip() for line in res.stdout.splitlines if line.strip()]
+
+            successPattern = re.compile(
+                r"^(?P<mon>\w{3})\s+(?P<day>\d{1,2})\s+(?P<time>\d{2}:\d{2}:\d{2}).*sshd\[\d+\]:\s+Accepted\s+\w+\s+for\s+(?P<user>\S+)\s+from\s+(?P<ip>\S+)\s+port\s+(?P<port>\d+)",
+                re.IGNORECASE,
+            )
+            failPattern = re.compile(
+                r"^(?P<mon>\w{3})\s+(?P<day>\d{1,2})\s+(?P<time>\d{2}:\d{2}:\d{2}).*sshd\[\d+\]:\s+Failed\s+\w+\s+for\s+(invalid user\s+)?(?P<user>\S+)\s+from\s+(?P<ip>\S+)\s+port\s+(?P<port>\d+)",
+                re.IGNORECASE,
+            )
+
+            res:List[SshLogBase] = []
+            currentYear = datetime.now().year
+            for line in lines:
+                if "sshd" not  in line.lower():
+                    continue
+                m = successPattern.match(line)
+                status = "SUCCESS"
+                reason = None
+
+                if not m:
+                    m = failPattern.match(line)
+                    status = "FAILURE"
+                    reason = "登录失败"
+
+                if not m:
+                    continue
+
+                ts = datetime.strptime(f"{currentYear} {m.group('mon')} {m.group('day')} {m.group('time')}","%Y %b %d %H:%M:%S")
+                res.append(
+                    SshLogBase(
+                        timestamp=ts,
+                        user=m.group("user"),
+                        sourceIp=m.group("ip"),
+                        port=int(m.group("port")),
+                        status=status,
+                        reason=reason,
+                    )
+                )
+            return res
+        
+        except PermissionError as e:
+            raise SecurityStatusReadException(innerMessage=str(e),userMessage="无法读取SSH日志",cause=e)
+        except Exception as e:
+            raise SecurityStatusReadException(innerMessage=str(e),userMessage="读取SSH日志失败",cause=e)
+
+        #筛选出ssh相关的日志
+
+        #写入新的日志在返回
+        
     def getSshConfig(self) -> SshConfig:
         # 先读取主配置文件，不存在时再尝试通配目录
         mainConfigPath = Path("/etc/ssh/sshd_config")
@@ -224,17 +291,7 @@ class FirewallService(Singleton):
     def updateSecuritySwitchState(self, updateRequest: SecuritySwitchUpdate) -> SecuritySwitchState:
         if updateRequest.sshServiceEnabled is not None:
             sshAction = ServiceAction.START if updateRequest.sshServiceEnabled else ServiceAction.STOP
-            try:
-                manageSystemService("sshd", action=sshAction)
-            except Exception as e1:
-                try:
-                    manageSystemService("ssh", action=sshAction)
-                except Exception as e2:
-                    raise SecurityStatusReadException(
-                        innerMessage=f"sshd更新失败: {e1}; ssh更新失败: {e2}",
-                        userMessage="更新SSH服务状态失败",
-                        cause=e2,
-                    )
+            self._updateSshServiceEnabled(sshAction)
 
         if updateRequest.firewallEnabled is not None:
             try:
@@ -267,6 +324,74 @@ class FirewallService(Singleton):
         return SecuritySwitchState(
             firewallEnabled=self.readComputerFirewallEnabled(),
             sshServiceEnabled=self.readSshServiceEnabled(),
+        )
+
+    def _updateSshServiceEnabled(self, sshAction: ServiceAction) -> None:
+        try:
+            manageSystemService("sshd", action=sshAction)
+            return
+        except Exception as e1:
+            sshdError = e1
+
+        try:
+            manageSystemService("ssh", action=sshAction)
+            return
+        except Exception as e2:
+            sshError = e2
+
+        systemctlAction = self._toSystemctlAction(sshAction)
+        sudoSshdErr = self._trySystemctlServiceAction("sshd", systemctlAction)
+        if sudoSshdErr is None:
+            return
+
+        sudoSshErr = self._trySystemctlServiceAction("ssh", systemctlAction)
+        if sudoSshErr is None:
+            return
+
+        raise SecurityStatusReadException(
+            innerMessage=(
+                f"sshd更新失败: {sshdError}; ssh更新失败: {sshError}; "
+                f"sudo systemctl sshd失败: {sudoSshdErr}; sudo systemctl ssh失败: {sudoSshErr}"
+            ),
+            userMessage="更新SSH服务状态失败",
+        )
+
+    def _toSystemctlAction(self, action: ServiceAction) -> str:
+        if action == ServiceAction.START:
+            return "start"
+        if action == ServiceAction.STOP:
+            return "stop"
+        if action == ServiceAction.RESTART:
+            return "restart"
+        return "status"
+
+    def _trySystemctlServiceAction(self, serviceName: str, action: str):
+        # 先尝试普通 systemctl（部分桌面环境允许当前用户通过 polkit 管理服务）。
+        directResult = subprocess.run(
+            ["systemctl", action, serviceName],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if directResult.returncode == 0:
+            return None
+
+        # 再尝试 sudo 非交互模式兜底。
+        sudoResult = subprocess.run(
+            ["sudo", "-n", "systemctl", action, serviceName],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if sudoResult.returncode == 0:
+            return None
+
+        return (
+            sudoResult.stderr.strip()
+            or sudoResult.stdout.strip()
+            or directResult.stderr.strip()
+            or directResult.stdout.strip()
+            or f"{serviceName} {action} 执行失败"
         )
     
 
@@ -375,6 +500,8 @@ class FirewallService(Singleton):
                 cause=e,
             )
 
+
+
     def _listPortRulesByUfwSudo(self) -> List[PortRule]:
         result = subprocess.run(
             ["sudo", "-n", "ufw", "status", "numbered"],
@@ -411,6 +538,7 @@ class FirewallService(Singleton):
 
         return apiRules
     
+
     def _toToolProtocol(self, protocol: int) -> str:
         return "tcp" if protocol == 1 else "udp"
 
@@ -553,3 +681,4 @@ class FirewallService(Singleton):
     def _removeManagedSshBlock(self,content:str) ->str:
         pattern = r"# PANEL_MANAGED_BEGIN.*?# PANEL_MANAGED_END\s*"
         return re.sub(pattern,"",content,flags=re.S)
+    

@@ -14,7 +14,7 @@ from Exception.RefreshTokenExpiryException import RefreshTokenExpiryException
 from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.TokenAuthException import TokenAuthException
 from Exception.UserNotFoundException import UserNotFoundException
-from Exception.FilePermissionDeniedException import FilePermissionDeniedException
+from Exception.ExecutePermissionDeniedException import ExecutePermissionDeniedException
 from Exception.BuiltinToolExecutionException import BuiltinToolExecutionException
 from Exception.SecurityStatusReadException import SecurityStatusReadException
 from Exception.InvalidParamException import InvalidParamException
@@ -74,8 +74,8 @@ class GlobalExceptionHandler:
     async def handleDataBaseException(self, request: Request, exception: DataBaseException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
-    @ExceptionHandler(FilePermissionDeniedException)
-    async def handleFilePermissionDeniedException(self, request: Request, exception: FilePermissionDeniedException) -> ResponseModel:
+    @ExceptionHandler(ExecutePermissionDeniedException)
+    async def handleFilePermissionDeniedException(self, request: Request, exception: ExecutePermissionDeniedException) -> ResponseModel:
         return Response.error(msg=exception.userMessage)
 
     @ExceptionHandler(BuiltinToolExecutionException)

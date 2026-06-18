@@ -1,7 +1,9 @@
 from Exception.DataBaseException import DataBaseException
+from Exception.InvalidParamException import InvalidParamException
 from Exception.InvalidTokenException import InvalidTokenException
 from Exception.PasswordIncorrectException import PasswordIncorrectException
 from Exception.RefreshTokenExpiryException import RefreshTokenExpiryException
+from Exception.TokenAuthException import TokenAuthException
 from gateway.dao.UserDaoInterface import UserDaoInterface
 from gateway.dao.UserDaoOrm import UserDaoOrm
 from gateway.orm.TokenOrm import TokenOrm
@@ -40,6 +42,8 @@ class UserService(Singleton):
         return token
 
     def logout(self, token: TokenRefreshRequest):
+        if not token.refreshToken:
+            raise TokenAuthException(userMessage="未携带refreshToken")
         try:
             countRow: int = self.userDao.deleteTokensByRefreshToken(token.refreshToken)
         except Exception as e:

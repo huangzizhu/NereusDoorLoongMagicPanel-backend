@@ -1,4 +1,5 @@
-from controller.SystemInfoController import SystemInfoController
+from gateway.controller.ConfigController import ConfigController
+from gateway.controller.SystemInfoController import SystemInfoController
 from gateway.controller.FileController import FileController
 from gateway.controller.AbstractController import AbstractController
 from gateway.Response import ResponseModel
@@ -10,6 +11,15 @@ from gateway.controller.LogController import LogController
 from gateway.controller.UserController import UserController
 from fastapi.middleware.cors import CORSMiddleware
 from gateway.controller.FirewallController import FirewallController
+from gateway.controller.ProcessController import ProcessController
+from gateway.controller.TerminalController import TerminalController
+
+from starlette.formparsers import MultiPartParser
+
+
+MAX_JSON_BODY = 10 * 1024 * 1024
+MAX_FILE_SIZE = 3 * 1024 * 1024 * 1024  # 3GB
+
 
 class Application:
 
@@ -23,6 +33,9 @@ class Application:
         self.controllers.append(FileController())
         self.controllers.append(FirewallController())
         self.controllers.append(SystemInfoController())
+        self.controllers.append(ConfigController())
+        self.controllers.append(ProcessController())
+        self.controllers.append(TerminalController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()
@@ -32,11 +45,16 @@ class Application:
             description="驭门龙面板后端",
             version="0.1.0",
             default_response_class=ResponseModel,
+            max_json_body_size=MAX_JSON_BODY,
         )
+        MultiPartParser.max_file_size = MAX_FILE_SIZE
+        MultiPartParser.max_part_size = MAX_FILE_SIZE  # 每个part上限
         app.add_middleware(GlobalInterceptor)
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=[
+                '*'
+            ],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
@@ -46,5 +64,3 @@ class Application:
 
         self.globalExceptionHandler.registerAllHandler(app)
         return app
-
-

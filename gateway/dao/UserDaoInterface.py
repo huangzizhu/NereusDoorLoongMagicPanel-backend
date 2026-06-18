@@ -27,3 +27,7 @@ class UserDaoInterface(Singleton):
     @abstractmethod
     def getUserByRefreshToken(self, refreshToken) -> UserOrm | None:
         pass
+
+    @abstractmethod
+    def getUserByUid(self, userId) -> Optional[UserOrm]:
+        pass
