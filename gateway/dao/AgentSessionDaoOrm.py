@@ -324,6 +324,69 @@ class AgentSessionDaoOrm(Singleton):
         finally:
             session.close()
 
+    def getMaxRoundIndex(self, sessionId: str) -> int:
+        """获取当前会话的最大 roundIndex（0 表示无消息）。"""
+        session = self.SessionLocal()
+        try:
+            row = session.query(AgentMessageOrm.roundIndex).filter(
+                AgentMessageOrm.sessionId == sessionId
+            ).order_by(AgentMessageOrm.roundIndex.desc()).first()
+            return row[0] if row else 0
+        finally:
+            session.close()
+
+    def getUserMessageForRound(self, sessionId: str,
+                               roundIndex: int) -> str | None:
+        """获取指定 round 中 user 角色的消息内容。"""
+        session = self.SessionLocal()
+        try:
+            row = session.query(AgentMessageOrm.content).filter(
+                AgentMessageOrm.sessionId == sessionId,
+                AgentMessageOrm.roundIndex == roundIndex,
+                AgentMessageOrm.role == "user",
+            ).order_by(AgentMessageOrm.messageId.asc()).first()
+            return row[0] if row else None
+        finally:
+            session.close()
+
+    def deleteRound(self, sessionId: str, roundIndex: int) -> int:
+        """删除指定轮次的所有消息。"""
+        session = self.SessionLocal()
+        try:
+            rowCount = session.query(AgentMessageOrm).filter(
+                AgentMessageOrm.sessionId == sessionId,
+                AgentMessageOrm.roundIndex == roundIndex,
+            ).delete()
+            session.query(AgentSessionOrm).filter(
+                AgentSessionOrm.sessionId == sessionId
+            ).update({"updatedAt": datetime.now()})
+            session.commit()
+            return rowCount
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def deleteMessagesFrom(self, sessionId: str, messageId: int) -> int:
+        """从指定 messageId 开始删除所有后续消息（含该条）。"""
+        session = self.SessionLocal()
+        try:
+            rowCount = session.query(AgentMessageOrm).filter(
+                AgentMessageOrm.sessionId == sessionId,
+                AgentMessageOrm.messageId >= messageId,
+            ).delete()
+            session.query(AgentSessionOrm).filter(
+                AgentSessionOrm.sessionId == sessionId
+            ).update({"updatedAt": datetime.now()})
+            session.commit()
+            return rowCount
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def addMessage(self, sessionId: str, role: str,
                    content: str | None = None,
                    traceId: str | None = None,

@@ -17,10 +17,12 @@ from typing import Any
 from fastapi import WebSocket
 
 from agent.agent_router.router import AgentMode
+from agent.shared.id_gen import gen_trace_id
 from agent.shared.types import AgentEvent
 from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.AgentSessionDaoOrm import AgentSessionDaoOrm
 from gateway.dao.AgentTokenUsageDaoOrm import AgentTokenUsageDaoOrm
+from gateway.dao.AgentTraceDaoOrm import AgentTraceDaoOrm
 from gateway.service.AgentLlmProfileService import AgentLlmProfileService
 from gateway.service.AgentBackgroundRunner import BackgroundRunner
 from gateway.service.AgentEventBuffer import AgentEventBuffer
@@ -42,6 +44,7 @@ class AgentGatewayService(Singleton):
         self.sessionDao = AgentSessionDaoOrm()
         self.profileService = AgentLlmProfileService()
         self.tokenUsageDao = AgentTokenUsageDaoOrm()
+        self.traceDao = AgentTraceDaoOrm()
 
         # ── S6：后台执行器（替代旧的 _runtimeSessions / _turnTasks）──
         self._runner = BackgroundRunner(
@@ -355,6 +358,25 @@ class AgentGatewayService(Singleton):
                         "done", sessionId, None, {"reason": "cancelled"},
                     ))
 
+                elif msgType == "regenerate":
+                    newMessage = str(payload.get("message") or "")
+                    await self._regenerate(
+                        websocket, sendLock, userId, sessionId,
+                        newMessage or None,
+                    )
+
+                elif msgType == "deleteMessage":
+                    messageId = payload.get("messageId")
+                    if messageId is None:
+                        await self._send(websocket, sendLock, self._serverEvent(
+                            "error", sessionId, None,
+                            {"message": "缺少 messageId"},
+                        ))
+                        continue
+                    await self._deleteMessagesFrom(
+                        websocket, sendLock, sessionId, int(messageId),
+                    )
+
                 else:
                     await self._send(websocket, sendLock, self._serverEvent(
                         "error", sessionId, None,
@@ -633,6 +655,144 @@ class AgentGatewayService(Singleton):
         ))
 
         return True
+
+    # ── 重新生成（Regenerate）──
+
+    async def _regenerate(self, websocket: WebSocket, sendLock: asyncio.Lock,
+                          userId: int, sessionId: str,
+                          newMessage: str | None = None) -> None:
+        """重新生成最后一轮（后台 Agent 版本）。
+
+        1. 防重入检查
+        2. 获取最大 round
+        3. 获取原始 user 消息
+        4. 删除最后 round
+        5. 清空事件 buffer（清除前一运行的积压事件）
+        6. 通过 BackgroundRunner 提交新消息
+        """
+        # 1. 防重入检查
+        if self._runner.isRunning(sessionId):
+            await self._send(websocket, sendLock, self._serverEvent(
+                "agent.busy", sessionId, None,
+                {"message": "Agent 正在运行中，请稍后再试"},
+            ))
+            return
+
+        # 2. 获取 max round
+        maxRound = self.sessionDao.getMaxRoundIndex(sessionId)
+        if maxRound == 0:
+            await self._send(websocket, sendLock, self._serverEvent(
+                "error", sessionId, None,
+                {"message": "没有可重新生成的消息"},
+            ))
+            return
+
+        # 3. 获取原始 user 消息
+        userMsg = self.sessionDao.getUserMessageForRound(sessionId, maxRound)
+        if not userMsg:
+            await self._send(websocket, sendLock, self._serverEvent(
+                "error", sessionId, None,
+                {"message": "找不到该轮的用户消息"},
+            ))
+            return
+
+        finalMessage = newMessage if newMessage else userMsg
+
+        # ── 记录 trace：用户触发了重新生成 ──
+        try:
+            self.traceDao.insert(
+                traceId=gen_trace_id(),
+                sessionId=sessionId,
+                eventType="message.regenerated",
+                timestamp=__import__("time").time(),
+                data={
+                    "roundIndex": maxRound,
+                    "message": finalMessage[:500],
+                    "hasNewMessage": newMessage is not None,
+                },
+            )
+        except AttributeError:
+            _logger.warning("traceDao 未初始化，跳过 trace 记录: session=%s", sessionId)
+        except Exception as e:
+            _logger.warning("记录 regenerate trace 失败: session=%s err=%s", sessionId, e)
+
+        # 4. 推送 regenerate.started 事件（前端即时反馈）
+        await self._send(websocket, sendLock, self._serverEvent(
+            "regenerate.started", sessionId, None, {
+                "roundIndex": maxRound,
+                "message": "已开始重新生成，请等待",
+            },
+        ))
+
+        # 5. 删除最后 round
+        self.sessionDao.deleteRound(sessionId, maxRound)
+
+        # 6. 清空事件 buffer（清除前一运行的积压事件）
+        await self._runner.clearBuffer(sessionId)
+
+        # 重置去重游标（新 buffer 的 _seq 从 0 开始，必须重置）
+        self._lastPushedSeq[sessionId] = -1
+
+        # 7. 通过 BackgroundRunner 提交（享受事件 buffer + WS 解耦）
+        self.sessionDao.updateStatus(sessionId, "running")
+
+        # 确保 stream task 已被清理（避免旧 stream 干扰）
+        existing = self._streamTasks.pop(sessionId, None)
+        if existing and not existing.done():
+            existing.cancel()
+
+        buffer = await self._runner.submit(userId, sessionId, finalMessage)
+
+        _logger.info(
+            "Regenerate 已提交: session=%s round=%s message_len=%d",
+            sessionId, maxRound, len(finalMessage),
+        )
+
+        # 8. 启动新的事件流推送
+        task = asyncio.create_task(
+            self._streamEvents(websocket, sendLock, sessionId, buffer),
+        )
+        self._streamTasks[sessionId] = task
+
+    # ── 消息截断删除（从指定 messageId 删除所有后续消息）──
+
+    async def _deleteMessagesFrom(self, websocket: WebSocket,
+                                  sendLock: asyncio.Lock,
+                                  sessionId: str,
+                                  messageId: int) -> None:
+        """从指定 messageId 开始删除所有后续消息（含该条）。"""
+        if self._runner.isRunning(sessionId):
+            await self._send(websocket, sendLock, self._serverEvent(
+                "agent.busy", sessionId, None,
+                {"message": "Agent 正在运行中，请稍后再试"},
+            ))
+            return
+
+        rowCount = self.sessionDao.deleteMessagesFrom(sessionId, messageId)
+
+        # ── 记录 trace：消息截断删除 ──
+        try:
+            self.traceDao.insert(
+                traceId=gen_trace_id(),
+                sessionId=sessionId,
+                eventType="message.deleted",
+                timestamp=__import__("time").time(),
+                data={
+                    "messageId": messageId,
+                    "deletedCount": rowCount,
+                },
+            )
+        except AttributeError:
+            _logger.warning("traceDao 未初始化，跳过 trace 记录: session=%s", sessionId)
+        except Exception as e:
+            _logger.warning("记录 deleteMessage trace 失败: session=%s err=%s", sessionId, e)
+
+        await self._send(websocket, sendLock, self._serverEvent(
+            "messages.deleted", sessionId, None, {
+                "messageId": messageId,
+                "deletedCount": rowCount,
+            },
+        ))
 
     # ── 特权提权事件处理 ──
 

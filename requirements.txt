@@ -38,8 +38,6 @@ email-validator==2.3.0
     # via pydantic
 fastapi==0.135.3
     # via nereusdoorloongmagicpanel-backend
-greenlet==3.4.0 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
-    # via sqlalchemy
 h11==0.16.0
     # via
     #   httpcore
@@ -60,6 +58,10 @@ iniconfig==2.3.0
     # via pytest
 jiter==0.14.0
     # via openai
+markdown-it-py==4.2.0
+    # via rich
+mdurl==0.1.2
+    # via markdown-it-py
 mypy-extensions==1.1.0
     # via black
 openai==2.32.0
@@ -89,7 +91,9 @@ pydantic-core==2.46.0
 pydantic-settings==2.14.0
     # via nereusdoorloongmagicpanel-backend
 pygments==2.20.0
-    # via pytest
+    # via
+    #   pytest
+    #   rich
 pyjwt==2.12.1
     # via nereusdoorloongmagicpanel-backend
 pytest==9.0.3
@@ -107,6 +111,8 @@ requests==2.34.2
     # via
     #   tavily-python
     #   tiktoken
+rich==15.0.0
+    # via nereusdoorloongmagicpanel-backend
 ruff==0.15.10
 sniffio==1.3.1
     # via openai

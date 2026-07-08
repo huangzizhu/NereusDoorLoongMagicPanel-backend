@@ -17,6 +17,8 @@ _STAGE_MAP = {
     "tool.result": "执行结果",
     "injection.detected": "注入风险",
     "session.done": "闭环完成",
+    "message.regenerated": "消息操作",
+    "message.deleted": "消息操作",
 }
 
 

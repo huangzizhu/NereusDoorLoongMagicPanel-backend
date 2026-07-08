@@ -108,6 +108,17 @@ class BackgroundRunner:
         state = self._sessions.get(sessionId)
         return state["buffer"] if state else None
 
+    async def clearBuffer(self, sessionId: str) -> None:
+        """清空会话的事件缓冲区（regenerate 时使用）。"""
+        async with self._lock:
+            state = self._sessions.get(sessionId)
+            if state is None:
+                return
+            buffer = state["buffer"]
+            # 重建 buffer 以完全清空积压事件
+            newBuffer = AgentEventBuffer(maxSize=1000)
+            state["buffer"] = newBuffer
+
     def isRunning(self, sessionId: str) -> bool:
         """检查是否有后台 agent 在运行。"""
         state = self._sessions.get(sessionId)

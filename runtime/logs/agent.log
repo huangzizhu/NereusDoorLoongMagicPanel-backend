@@ -219,3 +219,15 @@
 {"ts": 1781708512.142, "time": "2026-06-17T23:01:52", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_8fab84d50992 tool=manageSystemServicePrivileged"}
 {"ts": 1781708526.677, "time": "2026-06-17T23:02:06", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "WS 重连检测到待审批事件: session=sess_8fab84d50992 tool=manageSystemServicePrivileged"}
 {"ts": 1781708541.225, "time": "2026-06-17T23:02:21", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_8fab84d50992 title=连续5次重启nginx请求"}
+{"ts": 1781709739.121, "time": "2026-06-17T23:22:19", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_93a1b7d1acda title=消息删除测试及可见条数询问"}
+{"ts": 1781710261.987, "time": "2026-06-17T23:31:01", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_ac38832e24f7 title=消息删除与重新生成测试"}
+{"ts": 1781710723.438, "time": "2026-06-17T23:38:43", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_e8055e8fbb1b title=消息删除与重新生成测试"}
+{"ts": 1781710746.518, "time": "2026-06-17T23:39:06", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_e8055e8fbb1b round=2 message_len=8"}
+{"ts": 1781710768.061, "time": "2026-06-17T23:39:28", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_e8055e8fbb1b round=2 message_len=8"}
+{"ts": 1781710802.27, "time": "2026-06-17T23:40:02", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_e8055e8fbb1b round=2 message_len=8"}
+{"ts": 1781711167.127, "time": "2026-06-17T23:46:07", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_e8055e8fbb1b round=2 message_len=8"}
+{"ts": 1781711187.615, "time": "2026-06-17T23:46:27", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_e8055e8fbb1b round=2 message_len=8"}
+{"ts": 1781711579.179, "time": "2026-06-17T23:52:59", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_e8055e8fbb1b round=2 message_len=8"}
+{"ts": 1781711584.645, "time": "2026-06-17T23:53:04", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_e8055e8fbb1b round=2 message_len=8"}
+{"ts": 1781712346.769, "time": "2026-06-18T00:05:46", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "Regenerate 已提交: session=sess_3d4243fe7a18 round=1 message_len=8"}
+{"ts": 1781712347.395, "time": "2026-06-18T00:05:47", "level": "INFO", "logger": "ndlmpanel.gateway", "message": "自动标题生成成功: session=sess_3d4243fe7a18 title=用户请求调用工具"}
