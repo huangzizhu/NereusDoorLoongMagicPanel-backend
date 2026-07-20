@@ -3,7 +3,13 @@
 > 面向麒麟操作系统的安全智能运维平台后端。  
 > 以自然语言 Agent 为入口，以一站式运维面板为承载，以可审计安全护栏为底座。
 
-完整界面截图与功能展示见：[项目界面与功能展示](docs/project-showcase.md)。
+## 文档入口
+
+- [麒麟 + LoongArch 部署全流程](docs/deploy-kylin-loongarch-fullflow.md)
+- [前端与后端部署文档](docs/deploy-frontend-backend.md)
+- [特权代理与 CLI 部署文档](docs/deploy-privileged-agent-cli.md)
+- [API 一览](docs/api一览.md)
+- [项目界面与功能展示](docs/project-showcase.md)
 
 本项目面向中国软件杯 A2 赛题“面向麒麟操作系统的安全智能运维 Agent 设计与实现”，围绕真实 Linux / 麒麟服务器运维场景构建。系统并不止步于“让大模型执行命令”，而是将 Agent 能力、OS 感知、MCP 工具体系、运维管理 API、安全审批、特权执行、定时巡检和审计追溯整合为一个完整的 B/S 运维平台。
 
