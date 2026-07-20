@@ -46,6 +46,10 @@ class BackgroundRunner:
 
     async def submit(
         self, userId: int, sessionId: str, message: str,
+        autoApproveScheduled: bool = False,
+        nonInteractiveApprovals: bool = False,
+        scheduledApprovalPolicy: dict | None = None,
+        includeCoreTools: bool = False,
     ) -> AgentEventBuffer:
         """提交用户消息，返回事件缓冲区。
 
@@ -63,9 +67,17 @@ class BackgroundRunner:
                     "runtime": None,
                     "running": False,
                     "userId": userId,
+                    "autoApproveScheduled": autoApproveScheduled,
+                    "nonInteractiveApprovals": nonInteractiveApprovals,
+                    "scheduledApprovalPolicy": scheduledApprovalPolicy,
+                    "includeCoreTools": includeCoreTools,
                 }
 
             sessionState = self._sessions[sessionId]
+            sessionState["autoApproveScheduled"] = autoApproveScheduled
+            sessionState["nonInteractiveApprovals"] = nonInteractiveApprovals
+            sessionState["scheduledApprovalPolicy"] = scheduledApprovalPolicy
+            sessionState["includeCoreTools"] = includeCoreTools
 
             if sessionState["running"]:
                 await sessionState["queue"].put(message)
@@ -477,6 +489,14 @@ class BackgroundRunner:
             mode=mode,
             toolSource=session.toolSource,
             mcpServers=session.mcpServers,
+            autoApproveScheduled=bool(
+                sessionState.get("autoApproveScheduled")
+            ),
+            nonInteractiveApprovals=bool(
+                sessionState.get("nonInteractiveApprovals")
+            ),
+            scheduledApprovalPolicy=sessionState.get("scheduledApprovalPolicy"),
+            includeCoreTools=bool(sessionState.get("includeCoreTools")),
         )
         return runtime
 

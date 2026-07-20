@@ -19,6 +19,10 @@ from gateway.controller.NginxController import NginxController
 from gateway.controller.AgentController import AgentController
 from gateway.controller.ModelPricingController import ModelPricingController
 from gateway.controller.AdminController import AdminController
+from gateway.controller.ScheduledTaskController import ScheduledTaskController
+from gateway.controller.InspectionController import InspectionController
+from gateway.internal_rpc import start_backend_rpc_server, stop_backend_rpc_server
+from gateway.scheduler.scheduler import AgentScheduler
 
 from gateway.orm.OrmEngine import OrmEngine
 
@@ -50,6 +54,8 @@ class Application:
         self.controllers.append(AgentController())
         self.controllers.append(ModelPricingController())
         self.controllers.append(AdminController())
+        self.controllers.append(ScheduledTaskController())
+        self.controllers.append(InspectionController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()
@@ -80,4 +86,15 @@ class Application:
             app.include_router(controller.router)
 
         self.globalExceptionHandler.registerAllHandler(app)
+
+        @app.on_event("startup")
+        async def _startupScheduler():
+            await AgentScheduler().start()
+            start_backend_rpc_server()
+
+        @app.on_event("shutdown")
+        async def _shutdownScheduler():
+            stop_backend_rpc_server()
+            await AgentScheduler().shutdown()
+
         return app

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from enum import Enum
 from agent.shared.types import EventType, LLMResponse, ToolRiskLevel
 from agent.shared.id_gen import gen_tool_call_id
@@ -98,6 +99,9 @@ class AgentCore:
         contextWindow: int = 1048576,
         maxToolCallsPerRound: int = 0,
         mode: AgentMode = AgentMode.AGENT,
+        autoApproveScheduled: bool = False,
+        nonInteractiveApprovals: bool = False,
+        scheduledApprovalPolicy: dict | None = None,
     ):
         self._llm = llmProvider
         self._registry = registry
@@ -110,6 +114,9 @@ class AgentCore:
         self._maxToolCallsPerRound = maxToolCallsPerRound
         self._approvalTimeout = approvalTimeout
         self._mode = mode
+        self._autoApproveScheduled = autoApproveScheduled
+        self._nonInteractiveApprovals = nonInteractiveApprovals
+        self._scheduledApprovalPolicy = scheduledApprovalPolicy or {}
         # ── 后台超时控制（S6：WS 解耦后 Agent 在后台独立运行）──
         self._maxBackgroundTime: float = 1800.0   # 30 分钟最大后台运行时间
         self._startTime: float | None = None
@@ -588,13 +595,71 @@ class AgentCore:
                         })
                         continue
                     elif verdict.value == "require_confirm":
-                        self._trace(traceId, sessionId, "approval.requested", {
-                            "tool": name, "args": {k: str(v)[:100] for k, v in args.items()},
-                            "ai_reason": ai_reason,
-                        })
-                        toolOutput = await self._handleApproval(
-                            stream, name, args, reason, ai_reason=ai_reason,
-                            call_id=callId)
+                        if self._nonInteractiveApprovals or self._autoApproveScheduled:
+                            allowed, policyReason = self._isPreAuthorizedToolCall(name, args)
+                            if allowed:
+                                autoReason = (
+                                    "scheduled policy pre-authorized REQUIRE_CONFIRM; "
+                                    f"policy_reason={reason}; match={policyReason}"
+                                )
+                                self._trace(traceId, sessionId, "approval.pre_authorized", {
+                                    "tool": name,
+                                    "args": {k: str(v)[:100] for k, v in args.items()},
+                                    "ai_reason": ai_reason,
+                                    "reason": autoReason,
+                                })
+                                stream.emit(EventType.APPROVAL_RESOLVED, {
+                                    "action_id": callId,
+                                    "approved": True,
+                                    "reason": autoReason,
+                                })
+                                toolOutput = await self._executeTool(name, args)
+                            else:
+                                toolOutput = (
+                                    f"[预授权未覆盖] 工具 {name} 未执行。"
+                                    f"安全原因: {reason}; 匹配结果: {policyReason}"
+                                )
+                                self._trace(traceId, sessionId, "approval.pre_authorization_denied", {
+                                    "tool": name,
+                                    "args": {k: str(v)[:100] for k, v in args.items()},
+                                    "ai_reason": ai_reason,
+                                    "reason": reason,
+                                    "policy_reason": policyReason,
+                                })
+                                stream.emit(EventType.APPROVAL_RESOLVED, {
+                                    "action_id": callId,
+                                    "approved": False,
+                                    "reason": toolOutput,
+                                })
+                                stream.emit(EventType.TOOL_RESULT, {
+                                    "call_id": callId, "tool_name": name,
+                                    "success": False, "output": toolOutput,
+                                })
+                                stream.emit(EventType.ERROR, {"message": toolOutput})
+                                self._trace(traceId, sessionId, "tool.result", {
+                                    "tool": name, "call_id": callId,
+                                    "output_len": len(toolOutput),
+                                })
+                                modelToolOutput = self._fitToolOutputForModel(
+                                    toolOutput,
+                                    MAX_TOOL_OUTPUT_CHARS_FOR_MODEL,
+                                    MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
+                                )
+                                totalToolOutputChars += len(modelToolOutput)
+                                self._msgs.append({
+                                    "role": "tool",
+                                    "tool_call_id": callId,
+                                    "content": modelToolOutput,
+                                })
+                                continue
+                        else:
+                            self._trace(traceId, sessionId, "approval.requested", {
+                                "tool": name, "args": {k: str(v)[:100] for k, v in args.items()},
+                                "ai_reason": ai_reason,
+                            })
+                            toolOutput = await self._handleApproval(
+                                stream, name, args, reason, ai_reason=ai_reason,
+                                call_id=callId)
                     else:
                         toolOutput = await self._executeTool(name, args)
 
@@ -692,6 +757,96 @@ class AgentCore:
             return await self._executeTool(name, args)
         rejectReason = decision.get("reason", "") or "用户拒绝执行"
         return f"[用户拒绝] 工具 {name} 未执行。原因: {rejectReason}"
+
+    def _isPreAuthorizedToolCall(self, name: str, args: dict) -> tuple[bool, str]:
+        policy = self._scheduledApprovalPolicy or {}
+        allowed_tools = set(str(x) for x in policy.get("allowedTools") or [])
+        if name not in allowed_tools:
+            return False, f"工具 {name} 不在 allowedTools 中"
+
+        allowed_privileged = set(
+            str(x) for x in policy.get("allowedPrivilegedCommands") or []
+        )
+        if allowed_privileged and name == "submitElevation":
+            requested = self._extractPrivilegedCommands(args)
+            if not requested:
+                return False, "无法识别 submitElevation 请求的特权命令"
+            denied = [cmd for cmd in requested if cmd not in allowed_privileged]
+            if denied:
+                return False, f"特权命令未授权: {', '.join(denied)}"
+
+        values = [str(v) for v in self._flattenArgumentValues(args)]
+        paths = self._extractPathLikeValues(values)
+        denied_paths = [str(p) for p in policy.get("deniedPaths") or [] if str(p)]
+        for path in paths:
+            for denied in denied_paths:
+                if self._pathWithin(path, denied):
+                    return False, f"路径 {path} 命中 deniedPaths: {denied}"
+
+        allowed_paths = [str(p) for p in policy.get("allowedPaths") or [] if str(p)]
+        if allowed_paths and paths:
+            for path in paths:
+                if not any(self._pathWithin(path, allowed) for allowed in allowed_paths):
+                    return False, f"路径 {path} 不在 allowedPaths 中"
+
+        return True, "工具和路径匹配 approvalPolicy"
+
+    @staticmethod
+    def _flattenArgumentValues(value) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, (int, float, bool)):
+            return [str(value)]
+        if isinstance(value, dict):
+            out: list[str] = []
+            for item in value.values():
+                out.extend(AgentCore._flattenArgumentValues(item))
+            return out
+        if isinstance(value, (list, tuple, set)):
+            out: list[str] = []
+            for item in value:
+                out.extend(AgentCore._flattenArgumentValues(item))
+            return out
+        return []
+
+    @staticmethod
+    def _extractPathLikeValues(values: list[str]) -> list[str]:
+        paths: list[str] = []
+        for value in values:
+            for match in re.findall(r"(?:~|/)[^\s'\"`,;|&<>]*", value):
+                cleaned = match.rstrip(".,)")
+                if cleaned and cleaned not in paths:
+                    paths.append(cleaned)
+        return paths
+
+    @staticmethod
+    def _pathWithin(path: str, base: str) -> bool:
+        if not base:
+            return False
+        normalized_path = path.rstrip("/")
+        normalized_base = base.rstrip("/")
+        return (
+            normalized_path == normalized_base
+            or normalized_path.startswith(normalized_base + "/")
+        )
+
+    @staticmethod
+    def _extractPrivilegedCommands(args: dict) -> list[str]:
+        if args.get("inline_cmd"):
+            return ["exec_arbitrary_cmd"]
+        if args.get("script_path"):
+            return ["exec_arbitrary_script"]
+        commands = args.get("commands") or []
+        result: list[str] = []
+        if isinstance(commands, list):
+            for item in commands:
+                if isinstance(item, dict):
+                    cmd = item.get("command")
+                    if isinstance(cmd, list):
+                        cmd = " ".join(str(part) for part in cmd)
+                    if cmd:
+                        result.append(str(cmd))
+        return result
 
     def _updateToolResponse(self, callId: str, newContent: str) -> None:
         """更新对话历史中指定 tool_call_id 的 tool 响应内容。

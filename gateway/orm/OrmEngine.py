@@ -1,4 +1,7 @@
 import logging
+import os
+import threading
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
@@ -9,12 +12,23 @@ from ProjectRoot import getProjectRootPath
 from gateway.Singleton import Singleton
 
 _logger = logging.getLogger(__name__)
+_SQL_LOGGER_NAME = "sqlalchemy.engine"
+_SQL_LOG_MAX_BYTES = 1 * 1024 * 1024
 
 # 增量迁移注册表：{表名: [(列名, 列定义SQL), ...]}
 _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "agent_sessions": [
         ("mcpServers", "mcpServers TEXT"),
         ("pendingChoice", "pendingChoice TEXT"),
+    ],
+    "scheduled_tasks": [
+        ("approvalPolicy", "approvalPolicy TEXT"),
+        ("approvalCode", "approvalCode TEXT"),
+        ("approvalStatus", "approvalStatus TEXT"),
+        ("approvalApprovedAt", "approvalApprovedAt DATETIME"),
+        ("approvalApprovedBy", "approvalApprovedBy TEXT"),
+        ("approvalTokenId", "approvalTokenId TEXT"),
+        ("approvalRejectedReason", "approvalRejectedReason TEXT"),
     ],
 }
 
@@ -26,6 +40,91 @@ _DROP_AND_RECREATE: dict[str, int] = {
     # "agent_token_usage": 11,     # 已禁用：会丢失计费记录
     "agent_model_pricing": 0,      # 0 = 不存在就建，安全
 }
+
+
+class _DateSplitFileHandler(logging.Handler):
+
+    def __init__(self, logDir: Path, maxBytes: int, encoding: str = "utf-8"):
+        super().__init__()
+        self.logDir = logDir
+        self.maxBytes = maxBytes
+        self.encoding = encoding
+        self._fileHandler: logging.FileHandler | None = None
+        self._currentPath: Path | None = None
+        self._handlerLock = threading.RLock()
+
+    def close(self) -> None:
+        with self._handlerLock:
+            if self._fileHandler is not None:
+                self._fileHandler.close()
+                self._fileHandler = None
+                self._currentPath = None
+        super().close()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = self.format(record)
+            with self._handlerLock:
+                targetPath = self._resolveTargetPath(message)
+                if self._currentPath != targetPath:
+                    self._switchFile(targetPath)
+                if self._fileHandler is not None:
+                    self._fileHandler.emit(record)
+        except Exception:
+            self.handleError(record)
+
+    def _switchFile(self, targetPath: Path) -> None:
+        if self._fileHandler is not None:
+            self._fileHandler.close()
+        fileHandler = logging.FileHandler(targetPath, encoding=self.encoding)
+        fileHandler.setFormatter(self.formatter)
+        self._fileHandler = fileHandler
+        self._currentPath = targetPath
+
+    def _resolveTargetPath(self, message: str) -> Path:
+        currentDate = datetime.now().strftime("%Y-%m-%d")
+        messageSize = len((message + "\n").encode(self.encoding))
+        index = 0
+        while True:
+            candidate = self._buildLogPath(currentDate, index)
+            if not candidate.exists():
+                return candidate
+            if candidate.stat().st_size + messageSize <= self.maxBytes:
+                return candidate
+            index += 1
+
+    def _buildLogPath(self, currentDate: str, index: int) -> Path:
+        if index == 0:
+            fileName = f"{currentDate}.log"
+        else:
+            fileName = f"{currentDate}-{index}.log"
+        return self.logDir.joinpath(fileName)
+
+
+def _configureSqlAlchemyFileLogging(projectRoot: Path, enabled: bool) -> None:
+    logDir = projectRoot.joinpath("log")
+    logDir.mkdir(parents=True, exist_ok=True)
+
+    sqlLogger = logging.getLogger(_SQL_LOGGER_NAME)
+    sqlLogger.propagate = False
+
+    hasHandler = False
+    for handler in list(sqlLogger.handlers):
+        if isinstance(handler, _DateSplitFileHandler) and handler.logDir.resolve() == logDir.resolve():
+            hasHandler = True
+            continue
+        if isinstance(handler, logging.FileHandler):
+            sqlLogger.removeHandler(handler)
+            handler.close()
+
+    if not hasHandler:
+        fileHandler = _DateSplitFileHandler(logDir=logDir, maxBytes=_SQL_LOG_MAX_BYTES)
+        fileHandler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        ))
+        sqlLogger.addHandler(fileHandler)
+
+    sqlLogger.setLevel(logging.INFO if enabled else logging.WARNING)
 
 
 def _runMigrations(engine) -> None:
@@ -64,9 +163,13 @@ class OrmEngine(Singleton):
         projectRoot = getProjectRootPath()
         self.dbFile: Path = projectRoot.joinpath("panel.db")
         self.DATABASE_URL = f"sqlite:///{self.dbFile.resolve().as_posix()}"
-        self.engine = create_engine(self.DATABASE_URL, echo=True)
+        echo_sql = os.getenv("NDLM_SQLALCHEMY_ECHO", "").lower() in {"1", "true", "yes", "on"}
+        _configureSqlAlchemyFileLogging(projectRoot, echo_sql)
+        self.engine = create_engine(self.DATABASE_URL, echo=False)
         self.Base = declarative_base()
         self._db_initialized = False
+        # 先确保数据库文件所在目录存在，避免首次部署时目录缺失导致初始化失败。
+        self.dbFile.parent.mkdir(parents=True, exist_ok=True)
 
     def ensureDbInit(self) -> None:
         """延迟初始化：在所有 ORM 模型加载完成后，创建表并运行迁移。
@@ -76,6 +179,8 @@ class OrmEngine(Singleton):
         最佳调用时机：应用启动时，所有 controller import 完成之后。
         """
         if not self._db_initialized:
+            # SQLite 在首次连接时会创建空文件，这里显式 touch 一次便于部署期校验。
+            self.dbFile.touch(exist_ok=True)
             self.Base.metadata.create_all(self.engine)
             _runMigrations(self.engine)
             self._db_initialized = True

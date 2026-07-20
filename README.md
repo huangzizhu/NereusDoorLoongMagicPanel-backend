@@ -1,315 +1,273 @@
-# 项目名称
-> 项目正在开发中 🚧
+# NereusDoorLoongMagicPanel-backend
 
-一个基于 **Linux + uv** 管理的 Python 项目
+> 面向麒麟操作系统的安全智能运维平台后端。  
+> 以自然语言 Agent 为入口，以一站式运维面板为承载，以可审计安全护栏为底座。
 
-## 快速开始（Linux 环境）
-**⚠️ 仅支持 Linux 系统**，请确保你的运行环境为 Linux
+完整界面截图与功能展示见：[项目界面与功能展示](docs/project-showcase.md)。
 
-### 1. Fork 并克隆仓库
-1. 点击本仓库右上角的 **Fork**，将项目复刻到你的 GitHub 账号下
-2. 克隆你 fork 后的仓库到本地：
-```bash
-git clone https://github.com/你的用户名/项目名.git
-cd 项目名
-```
+本项目面向中国软件杯 A2 赛题“面向麒麟操作系统的安全智能运维 Agent 设计与实现”，围绕真实 Linux / 麒麟服务器运维场景构建。系统并不止步于“让大模型执行命令”，而是将 Agent 能力、OS 感知、MCP 工具体系、运维管理 API、安全审批、特权执行、定时巡检和审计追溯整合为一个完整的 B/S 运维平台。
 
-### 2. 安装 uv 包管理器
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+项目核心价值是：**让 AI 具备真实运维能力，同时让高危操作始终处在可解释、可审批、可追溯、可约束的安全边界内。**
 
-### 3. 安装指定 Python 版本
-```bash
-uv python install 3.13.9
-```
+## 项目定位
 
-### 4. 创建虚拟环境
-```bash
-uv venv
-```
+NereusDoorLoongMagicPanel-backend 是一套面向服务器生产环境的智能运维后端，具备三层定位：
 
-### 5. 安装项目依赖
-```bash
-uv sync
-```
+- **智能 Agent 中枢**：理解自然语言运维需求，自动感知系统状态，规划处理步骤并调用 MCP 工具完成诊断与处置。
+- **一站式运维面板后端**：提供文件、进程、服务、防火墙、Docker、Nginx、数据库、终端、巡检、定时任务等运维域 API。
+- **安全特权执行平台**：将 root 操作从主后端剥离，通过特权代理、CLI 审批、签名请求、命令注册表和审计链路实现最小权限执行。
 
-### 6. 运行项目
-```bash
-python main.py
-```
+与传统监控面板相比，本项目不仅展示数据，还能通过 Agent 分析问题、提出方案并执行受控修复；与普通 AI Agent 相比，本项目不是简单“给大模型一个 shell”，而是构建了适合生产运维的权限边界与安全闭环。
 
-## 开发状态
-✅ 环境配置流程已完成
-🔄 核心功能开发中...
+## 赛题能力对齐
 
----
+| 赛题方向 | 项目实现 |
+|---|---|
+| OS 环境深度感知 | 通过系统信息、进程、网络、日志、服务、容器、数据库、防火墙等工具获取实时上下文 |
+| MCP 运维插件化 | 构建运维 MCP 包与 AgentCore MCP 包，覆盖系统运维和 Agent 基础工作流 |
+| 安全意图校验 | 提示词注入检测、风险规则引擎、工具风险分级、强制调用理由、人工审批 |
+| 最小权限代理执行 | 主后端普通权限运行，root 操作由独立特权代理承接 |
+| 推理链路溯源 | `input -> thinking -> tool_call -> safety_check -> approval -> result` 全链路 trace |
+| 抗误操作能力 | 高危参数识别、受保护路径拦截、CLI 审批、命令/参数哈希绑定 |
+| B/S 架构能力 | FastAPI + REST API + WebSocket + 后台任务调度，支撑完整运维面板 |
 
-## Web Terminal 备忘
+## 产品亮点
 
-本次新增了一套 Web Terminal 后端能力，采用现有 `controller / service / dao` 三层结构实现。
+### 1. 从 Agent 到运维平台
 
-### 已新增的接口
+本项目不是单点 Agent Demo，而是面向完整运维流程设计的后端平台。系统当前注册了约 **141 个 API / WebSocket 路由**，覆盖从日常管理到智能处置的核心链路。
 
-- `GET /terminal/available`
-  - 检查普通终端是否可用
-  - 会检查宿主机是否安装 Docker，以及默认业务容器是否存在且正在运行
-  - 如果不可用，会抛出业务异常并走全局异常处理，前端应据此禁止打开终端
+这些 API 并非孤立接口，而是围绕真实运维工作台组织：
 
-- `WS /terminal/ws`
-  - WebSocket 终端主入口
-  - 默认进入普通终端
-  - 支持普通终端实时输入输出
-  - 支持窗口 resize
-  - 支持通过 `admin_login` 切换到管理员真实宿主机终端
+- 管理员可以查看系统健康状态、告警、日志、进程和端口。
+- 管理员可以维护文件、目录、权限、压缩包、上传下载和内容读写。
+- 管理员可以管理 Docker 容器、镜像、日志、镜像源和容器生命周期。
+- 管理员可以管理 Nginx 站点、配置测试、reload/restart、SSL 申请和续期。
+- 管理员可以管理 MySQL 数据库、用户、连接测试和数据库状态。
+- 管理员可以查看防火墙规则、SSH 配置、端口开放情况和 SSH 登录日志。
+- 管理员可以通过 Web Terminal 进入受控终端环境，并保留终端会话元数据审计。
+- 管理员可以创建定时任务和自动巡检，让 Agent 周期性完成运维检查。
 
-- `WS /terminal/admin/ws`
-  - 管理员真实终端直连入口
-  - 不依赖 Docker
-  - 连接后首条消息必须是 `admin_login`
-  - 认证成功后直接进入管理员真实宿主机终端
+这使项目具备了“可使用、可演示、可扩展”的平台属性，而不是只停留在模型调用层。
 
-- `POST /terminal/session/log`
-  - 查询终端会话审计日志
-  - 当前首版只记录会话元数据，不记录全量输入输出
+### 2. 双 MCP 包：运维工具与 AgentCore 解耦
 
-### 已新增的消息协议
+项目为 Agent 专门构建了两套 MCP 能力包：
 
-前端发送：
+| MCP 包 | 定位 | 能力 |
+|---|---|---|
+| `ndlmpanel_agent.mcp` | 运维 MCP 包 | 系统感知、进程、网络、日志、服务、Docker、Nginx、数据库、防火墙、用户等运维工具 |
+| `agent.agent_mcp` | AgentCore MCP 包 | Workspace、文件编辑、搜索、Git、项目检查、命令执行、Web 搜索等 Agent 基础工具 |
 
-```json
-{ "type": "input", "data": "ls -la\n" }
-```
+这样的拆分提升了系统可维护性：
 
-```json
-{ "type": "resize", "cols": 120, "rows": 30 }
-```
+- 运维能力可以独立演进，不污染 Agent 基础工具层。
+- AgentCore 能力可以复用于代码分析、配置修复、脚本生成等任务。
+- 前端会话可按需切换工具来源和模型配置，支持不同任务场景。
 
-```json
-{ "type": "admin_login", "username": "he", "password": "******" }
-```
+### 3. 安全护栏不是提示词，而是后端执行硬规则
 
-后端发送：
+项目安全设计并不依赖“让模型自觉遵守规则”。真正的安全控制发生在后端执行层：
 
-```json
-{ "type": "output", "data": "..." }
-```
+- Agent 模式限制由后端 RuleEngine 执行。
+- 只读模式与计划模式只允许 `read_only` 工具。
+- 写入和高危工具必须经过风险评分与规则判断。
+- 命中关键路径、危险命令、危险权限变更、提权语句等模式时自动触发审批或阻断。
+- Prompt Injection 检测覆盖“忽略之前规则”“关闭安全护栏”“作为 root”等中英文注入表达。
 
-```json
-{ "type": "state", "sessionId": "xxx", "mode": "normal", "linuxUser": "appuser", "title": "user@app-container" }
-```
+因此，即使模型输出了危险工具调用，执行层仍会进行二次裁决。
 
-```json
-{ "type": "admin_login_result", "success": true, "mode": "admin", "msg": "管理员终端创建成功" }
-```
+### 4. 工具调用强制说明原因
 
-```json
-{ "type": "error", "code": "terminal_error", "msg": "..." }
-```
+项目对所有非只读工具强制注入 `reason` 参数。Agent 调用写入或高危工具时，必须说明：
 
-### 模式说明
+- 调用此工具的目的
+- 预期修改的对象
+- 为什么需要执行该操作
 
-#### 1. 普通终端
+如果缺少 `reason`，AgentLoop 会直接将工具调用打回，不执行工具。这一机制让用户审批不再面对黑盒动作，而是能看到 AI 的意图说明、工具参数、安全规则原因和审批建议。
 
-默认进入普通终端，当前实现为固定容器：
+### 5. 多模式 Agent 工作流
 
-```bash
-docker exec -it app-container bash
-```
+项目提供完整的 Agent 多模式能力：
 
-普通终端用于：
+| 模式 | 定位 | 安全策略 |
+|---|---|---|
+| `read_only` | 只读审计与诊断 | 只能调用只读工具，禁止修改系统状态 |
+| `plan` | 方案规划模式 | 只读分析，必须提交结构化计划等待审批 |
+| `agent` | 默认执行模式 | 只读自动执行，写入/高危操作按策略审批 |
+| `break_glass` | 紧急模式 | 降级审批但强化审计，适合应急演示 |
 
-- 项目调试
-- 日志查看
-- 常规 Linux 命令操作
+计划模式不仅是“让模型写方案”，而是后端实现了结构化 plan 提交、审批、拒绝反馈和模式切换。Agent 在信息不足时必须通过 `ask_choice` 向用户提出结构化选择题，前端可稳定展示，避免自由文本问答造成状态不可控。
 
-普通终端不应直接暴露真实宿主机。
+### 6. WebSocket 与 Agent 生命周期解耦
 
-#### 2. 管理员真实终端
+传统 WebSocket Agent 常见问题是：浏览器断开后任务中断、审批丢失、长任务无法恢复。项目通过 `BackgroundRunner + AgentEventBuffer` 将 Agent 运行与 WebSocket 连接解耦：
 
-在普通终端会话内，前端可发送：
+- WebSocket 只负责提交消息和消费事件。
+- Agent 在后台独立运行，断线不终止任务。
+- 重连后可重放积压事件。
+- 未完成的审批、计划和选择题可以恢复。
+- 运行中的会话支持消息排队，避免并发打断。
 
-```json
-{ "type": "admin_login", "username": "he", "password": "******" }
-```
+这使 Agent 更接近真实运维任务系统，而不是短连接聊天机器人。
 
-也可以直接连接：
+### 7. 定时任务与自动巡检
+
+项目将 Agent 扩展为后台运维执行器：
+
+- 支持 cron 定时任务。
+- 支持任务暂停、恢复、删除、手动触发和执行历史。
+- 支持定时任务预授权策略，任务未审批前保持 `pending_approval`。
+- 支持自动巡检，生成巡检报告并保留执行 session。
+- 后台任务会记录执行状态、摘要、错误信息和 token 用量。
+
+这类能力非常适合服务器场景：管理员可以让 Agent 每天检查备份、磁盘、日志、服务状态和安全风险，而不是每次手工发起对话。
+
+## 运维面板 API 能力
+
+项目 API 按运维域进行组织，体现了完整后台产品能力。以下为核心 API 域的概览，并非全部接口清单。
+
+| API 域 | 能力说明 |
+|---|---|
+| Agent 会话 | 会话创建、消息历史、模型切换、工具源切换、模式切换、Token 用量、Trace 查询、WebSocket 事件流 |
+| 文件管理 | 文件列表、目录树、上传下载、读写、复制、删除、批量删除、权限、属主、压缩/解压、搜索 |
+| 进程管理 | 进程 SSE、详情查看、普通 kill、强制 kill、批量处理、僵尸进程查询、自动清理、操作日志 |
+| 系统信息 | 健康状态、告警读取、告警已读、告警处理 |
+| 日志管理 | 系统日志聚合查询 |
+| 防火墙管理 | 开关状态、端口规则、SSH 配置、SSH 日志、规则增删查 |
+| Docker 管理 | 安装状态、容器列表、容器详情、容器日志、启动/停止/重启/删除、镜像拉取、容器创建、镜像源配置 |
+| Nginx 管理 | 安装状态、服务状态、配置测试、reload/restart、站点列表、站点读写、站点删除、SSL 申请/配置/续期 |
+| 数据库管理 | 数据库安装状态、服务状态、MySQL 连接测试、数据库创建、用户创建、数据库列表 |
+| Web Terminal | 普通终端、管理员终端、窗口 resize、认证切换、终端会话审计 |
+| 定时任务 | cron 任务创建、列表、编辑、暂停、恢复、删除、手动触发、运行历史、预授权审批 |
+| 自动巡检 | 巡检触发、巡检配置、报告列表、最新报告、报告详情 |
+| 模型配置 | LLM 凭证、模型 Profile、默认模型、模型连通性测试、模型列表拉取、计费参数 |
+| 管理员审批 | 特权码查询、待审批列表、批准、拒绝、吊销、审计记录、历史记录 |
+
+通过这些 API，前端可以构建一个真正可用的服务器运维面板；Agent 也可以复用同一套能力完成自动化诊断与受控执行。
+
+## 安全护栏体系
+
+### 分层防御模型
+
+项目采用多层防御，避免任何单点失效直接导致系统高危操作失控：
 
 ```text
-WS /terminal/admin/ws
+用户自然语言
+  -> Prompt Injection 检测
+  -> Agent 模式门控
+  -> 工具风险分级
+  -> 参数危险模式识别
+  -> 人工审批 / 计划审批 / CLI 审批
+  -> Ed25519 签名请求
+  -> root 特权代理二次验证
+  -> 命令注册表 / 路径约束 / hash 绑定
+  -> 执行结果与 trace 审计
 ```
 
-此时首条消息也必须发送：
+### 特权代理：root 能力最小化
 
-```json
-{ "type": "admin_login", "username": "he", "password": "******" }
-```
+主 FastAPI 后端不以 root 运行。需要 root 权限的操作由独立 `PrivilegedAgent` 承接，并通过 Unix Domain Socket 通信。
 
-后端会先调用 Linux 自己的认证流程校验用户名密码，认证成功后重新创建 PTY，进入：
+特权代理不是一个通用 root shell，而是一个受限执行器：
 
-```bash
-sudo -u he -i
-```
+- 通过 socket 文件权限限制连接范围。
+- 通过 `SO_PEERCRED` 校验调用进程 UID。
+- 通过 Ed25519 签名验证请求来源。
+- 通过 timestamp 和 nonce 防止重放。
+- 通过命令注册表限制可执行命令。
+- 通过路径白名单限制文件影响范围。
+- 通过 `args_hash` / `script_hash` 锁定审批时的参数和脚本内容。
 
-此时终端能力等价于该 Linux 用户直接 SSH 登录宿主机。
+这使系统在保留运维灵活性的同时，避免 Agent 获得无限 root 权限。
 
-### 当前依赖
+### CLI 审批：把高危操作交还给真实管理员
 
-当前不再依赖额外的 PAM Python 第三方库，安装方式仍为：
+项目设计了 `sudo nereus approve <CODE>` 的 CLI 审批模型。高危动作并不依赖普通 Web 点击直接放行，而是要求具备 sudo 权限的管理员在服务器侧完成确认。
 
-```bash
-uv sync
-```
+这一设计的意义在于：
 
-### 宿主机前置条件
+- 审批身份由操作系统权限保证。
+- 普通 Web 会话无法伪造 root 级审批。
+- 审批 token 存放在 root-only 文件中。
+- 审批结果回流 Agent 会话，形成完整闭环。
 
-要让终端功能真正可用，运行后端的 Linux 宿主机至少要满足：
+对于比赛场景，这一机制很好地体现了“安全性与实用性平衡”：Agent 可以提出复杂操作，但最终授权仍由系统管理员掌握。
 
-- 已安装 Docker
-- 普通终端对应的业务容器已存在且正在运行
-- 已安装 `sudo`
-- 已安装 `su`
-- Linux 本地认证环境可用
-- 后端运行用户具备执行管理员 shell 的 sudo 权限
+### AI-SAST 命令/脚本审计
 
-### Docker 不可用时的行为
+在管理员批准特权码之前，系统预留并实现了 AI-SAST 审计服务，对命令和脚本进行二次分析。审计关注：
 
-系统会在打开终端前做普通终端可用性检查：
+- 是否存在 `curl | bash`、`wget | sh` 等远程执行风险。
+- 是否存在 `eval`、`exec`、`source` 等动态执行。
+- 是否访问 `/etc`、`/root`、`/boot` 等敏感目录。
+- 是否存在嵌套命令、混淆行为或网络请求。
 
-- 没有安装 Docker
-- 默认容器不存在
-- 默认容器未运行
+审计结果以结构化 JSON 输出，便于 CLI 或前端展示风险等级、问题说明和处置建议。
 
-以上任一情况都会直接报业务错误，前端不应允许用户继续使用普通终端功能。
+## Agent 执行闭环
 
-但这不会影响管理员直连入口：
-
-- `WS /terminal/ws` 仍会被直接拒绝
-- `WS /terminal/admin/ws` 仍可以继续使用管理员认证
-
-### sudoers 配置说明
-
-管理员模式不是项目内权限配置，而是 Linux 宿主机权限配置。
-
-当前代码执行的是：
-
-```bash
-sudo -u <linux_username> -i
-```
-
-因此必须给“运行 FastAPI 后端的 Linux 用户”配置 `sudoers`。
-
-例如：
-
-- 后端服务运行用户：`backend`
-- 普通终端用户：`appuser`
-- 管理员 Linux 用户：`he`
-
-建议在宿主机上编辑：
-
-```bash
-sudo visudo -f /etc/sudoers.d/nereus-terminal
-```
-
-然后写入类似配置：
-
-```sudoers
-backend ALL=(he) NOPASSWD: ALL
-```
-
-上面这条最容易跑通，但权限过大，只建议临时验证。
-
-更推荐后续收敛成固定脚本白名单，例如：
-
-```sudoers
-backend ALL=(he) NOPASSWD: /usr/local/bin/enter-real-shell
-```
-
-不要直接手改 `/etc/sudoers`，优先使用 `/etc/sudoers.d/` 并通过 `visudo` 校验语法。
-
-### 当前可配置环境变量
-
-终端服务当前支持以下环境变量：
+项目将 Agent 每一次动作都拆分为可观测事件：
 
 ```text
-NDLM_TERMINAL_NORMAL_CONTAINER=app-container
-NDLM_TERMINAL_NORMAL_LINUX_USER=appuser
-NDLM_TERMINAL_NORMAL_SHELL=bash
-NDLM_TERMINAL_IDLE_TIMEOUT_SECONDS=1800
-NDLM_TERMINAL_ADMIN_MAX_FAILED_ATTEMPTS=5
+用户输入
+  -> LLM 思考与输出
+  -> 工具调用请求
+  -> 安全检查
+  -> 审批请求或自动放行
+  -> 工具执行结果
+  -> Agent 总结
+  -> trace 持久化
 ```
 
-## 特权代理
+事件流包含 `thinking.start`、`text.delta`、`tool.calling`、`safety.checked`、`approval.required`、`plan.proposed`、`choice.required`、`tool.result`、`done` 等类型。前端可以基于这些事件构建清晰的执行时间线，让用户看到 AI 做了什么、为什么做、是否安全、结果如何。
 
-当前仓库新增了一套本机 root 特权代理，用于承接防火墙和其他需要提权的宿主机操作。
+## 审计与可追溯
 
-### 设计目标
+项目审计并非简单记录文本日志，而是构建了可追溯的事件链：
 
-- FastAPI 主服务继续以普通用户运行
-- root 权限操作通过本机 Unix socket 转发给独立守护进程
-- 不开放 TCP 端口
-- 不支持任意命令执行，只支持白名单动作
+- Trace 事件写入数据库和 JSONL。
+- 每条 trace 记录包含 `entry_hash` 与 `prev_hash`。
+- 同一 session 内形成 SHA-256 哈希链。
+- 审计数据经过脱敏处理后持久化。
+- 支持按 session、trace、事件类型查询。
 
-### 当前已接入的能力
+这满足赛题对“接收指令 -> 感知环境 -> 推理决策 -> 安全校验 -> 执行结果”闭环日志的要求，也为后续异常回放和责任定位提供基础。
 
-- 防火墙状态读取
-- 防火墙规则列表读取
-- 新增放行端口规则
-- 开关 firewalld / ufw
-- 开关 `ssh` / `sshd` 服务
-
-### 运行方式
-
-示例 systemd 单元见：
-
-`deploy/systemd/nereus-privileged-agent.service`
-
-默认通过下面的 socket 与主服务通信：
+## 技术架构
 
 ```text
-/run/ndlmpanel/privileged-agent.sock
+FastAPI Gateway
+  ├── Controller 层：运维面板 API 与 WebSocket 接入
+  ├── Service 层：业务编排、Agent 调度、审批、巡检、终端、特权代理调用
+  ├── DAO / ORM 层：会话、消息、trace、任务、巡检、用户、配置持久化
+  ├── Agent Runtime：模式路由、工具执行、安全检查、事件流
+  ├── MCP Runtime：运维工具包 + AgentCore 工具包
+  ├── Safety：规则引擎、注入检测、风险评分、AI-SAST
+  └── Privileged Agent：root 权限隔离执行器
 ```
 
-### 代理环境变量
+核心技术栈：
 
-```text
-NDLM_PRIVILEGED_AGENT_SOCKET=/run/ndlmpanel/privileged-agent.sock
-NDLM_PRIVILEGED_AGENT_SOCKET_GROUP=backend
-NDLM_PRIVILEGED_AGENT_SOCKET_MODE=660
-NDLM_PRIVILEGED_AGENT_TIMEOUT_SECONDS=5
-```
+- Python / FastAPI / WebSocket
+- SQLAlchemy ORM
+- APScheduler 定时调度
+- MCP stdio 工具协议
+- Ed25519 签名与验签
+- Unix Domain Socket / SO_PEERCRED
+- SHA-256 哈希链审计
+- OpenAI-compatible / Anthropic-compatible LLM Provider
 
-### 部署要求
+## 项目特色总结
 
-- 代理必须以 `root` 运行
-- 主后端运行用户必须属于 `NDLM_PRIVILEGED_AGENT_SOCKET_GROUP` 指定的组
-- 宿主机需安装对应系统命令，如 `ufw`、`firewall-cmd`、`systemctl`
-- 当前代理只允许操作白名单 systemd 服务：`ssh`、`sshd`、`firewalld`
+- **不是单点 Agent，而是完整运维平台**：API 覆盖服务器运维常见对象，支撑完整前端面板。
+- **不是靠提示词保证安全，而是执行层强制安全**：模式门控、风险规则、审批和特权代理共同组成硬边界。
+- **不是只读分析，而是受控执行**：支持文件写入、服务管理、防火墙、Nginx、Docker、数据库等真实运维动作。
+- **不是一次性对话，而是任务系统**：支持后台运行、断线恢复、定时任务、自动巡检和执行历史。
+- **不是黑盒调用，而是可解释可审计**：工具调用必须说明原因，所有关键事件进入 trace 哈希链。
+- **不是无限 root 权限，而是最小权限授权**：特权代理仅执行注册命令，CLI 审批与 hash 绑定限制操作边界。
 
-### 审计说明
+## 一句话概括
 
-当前版本会记录终端会话元数据，包括：
-
-- `sessionId`
-- 面板用户 ID 和用户名
-- 客户端 IP
-- 当前模式
-- 普通终端容器名
-- 管理员 Linux 用户名
-- 管理员认证是否尝试/是否成功/失败次数
-- 开始时间、结束时间、关闭原因、退出码
-
-当前版本不记录：
-
-- 全量终端输入
-- 全量终端输出
-- 命令级回放
-
-### 额外注意事项
-
-- `admin_login` 的密码不会进入普通终端输入流，也不会落库
-- WebSocket 鉴权不走现有 HTTP 中间件，而是在终端控制器里单独校验 `accessToken`
-- 如果前端直接连 `WS /terminal/ws` 且普通终端不可用，连接会被直接拒绝
-- 如果前端直接连 `WS /terminal/admin/ws`，首条消息必须为 `admin_login`
-- 如果需要真正上线管理员模式，必须先在目标机器完成 `sudoers`、`su` 和本地认证环境验证
-- 后端会过滤宿主终端私有控制序列，例如 `OSC 3008`，但会保留 shell 自身的 `no job control` 提示
+NereusDoorLoongMagicPanel-backend 将大模型 Agent、MCP 运维工具、安全特权代理和一站式运维面板融合为一个可落地的智能运维后端，使 AI 不仅能够理解运维需求，更能够在安全、可控、可审计的前提下完成真实系统管理任务。

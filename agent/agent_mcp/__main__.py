@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 
@@ -39,6 +40,9 @@ def buildDispatcher() -> McpDispatcher:
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.WARNING)
+
     parser = argparse.ArgumentParser(prog="ndlmpanel-agent-core-mcp")
     parser.add_argument(
         "--transport",

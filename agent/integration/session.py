@@ -45,7 +45,10 @@ class AgentSession:
                  mode: AgentMode = AgentMode.AGENT,
                  toolSource: str = "current_mcp",
                  includeCoreTools: bool = False,
-                 mcpServers: list[dict] | None = None):
+                 mcpServers: list[dict] | None = None,
+                 autoApproveScheduled: bool = False,
+                 nonInteractiveApprovals: bool = False,
+                 scheduledApprovalPolicy: dict | None = None):
         self._config = config
         self._userId = userId
         self._sessionId = sessionId or gen_session_id()
@@ -128,6 +131,9 @@ class AgentSession:
             contextWindow=config.llm_context_window,
             maxToolCallsPerRound=config.max_tool_calls_per_round,
             mode=self._mode,
+            autoApproveScheduled=autoApproveScheduled,
+            nonInteractiveApprovals=nonInteractiveApprovals,
+            scheduledApprovalPolicy=scheduledApprovalPolicy,
         )
         self._core.setRecorder(self._recorder)
         self._runTask: "asyncio.Task | None" = None

@@ -254,19 +254,34 @@ def cmd_approve(code: str):
     commands = data.get("commands", [])
     inline_cmd = data.get("inline_cmd", "")
     script_path = data.get("script_path", "")
+    request_type = data.get("request_type", "privileged")
+    approval_policy = data.get("approval_policy") or {}
     has_multiple = len(commands) > 1
     is_dual_channel = bool(inline_cmd) or bool(script_path)
 
     # 2. 显示待审批信息
     print("\n" + "=" * 60)
-    print("🔐  特权请求批准")
+    title = "定时任务预授权批准" if request_type == "scheduled_task_policy" else "特权请求批准"
+    print(f"🔐  {title}")
     print("=" * 60)
     print(f"  Session:  {data.get('session_id', '?')}")
+    if data.get("task_id") is not None:
+        print(f"  Task ID:  {data.get('task_id')}")
     print(f"  原因:     {data.get('reason', '?')}")
     print(f"  请求者:   AI Agent")
 
     # 通道提示
-    if inline_cmd:
+    if request_type == "scheduled_task_policy":
+        allowed_tools = approval_policy.get("allowedTools") or []
+        allowed_paths = approval_policy.get("allowedPaths") or []
+        denied_paths = approval_policy.get("deniedPaths") or []
+        allowed_privileged = approval_policy.get("allowedPrivilegedCommands") or []
+        print("\n  ── ⏱ 定时任务预授权策略 ──")
+        print(f"  允许工具: {', '.join(str(x) for x in allowed_tools) or '(无)'}")
+        print(f"  允许目录: {', '.join(str(x) for x in allowed_paths) or '(未限制)'}")
+        print(f"  禁止目录: {', '.join(str(x) for x in denied_paths) or '(无)'}")
+        print(f"  允许特权命令: {', '.join(str(x) for x in allowed_privileged) or '(未配置)'}")
+    elif inline_cmd:
         print(f"\n  ── 📝 Channel 1: 自由命令 ──")
         print(f"  命令: {inline_cmd}")
     elif script_path:
@@ -288,7 +303,7 @@ def cmd_approve(code: str):
 
     # 3. AI 安全审计（对所有高风险操作执行）
     #    多命令 / 双通道 / 脚本 都触发审计
-    if has_multiple or inline_cmd or script_path:
+    if request_type == "scheduled_task_policy" or has_multiple or inline_cmd or script_path:
         print("  ── 正在进行 AI 安全审计 ──")
         print()
         try:
@@ -306,7 +321,10 @@ def cmd_approve(code: str):
         # 强制预览提示
         print("  " + "─" * 56)
         print("  请仔细阅读以上 AI 审计报告。")
-        print("  你即将批准的操作具有 root 权限。")
+        if request_type == "scheduled_task_policy":
+            print("  你即将批准后台定时任务在无人值守时自动执行匹配操作。")
+        else:
+            print("  你即将批准的操作具有 root 权限。")
         print()
 
     # 4. 最终确认
@@ -331,6 +349,8 @@ def cmd_approve(code: str):
     print(f"✅ 已批准！Agent 可执行")
     print(f"   Token ID: {data.get('token_id', '?')}")
     print(f"   Session:  {data.get('session_id', '?')}")
+    if data.get("taskId") is not None:
+        print(f"   Task ID:  {data.get('taskId')}")
     print(f"   最大执行: {data.get('max_ops', '?')} 次")
 
 
@@ -348,8 +368,18 @@ def cmd_list_pending():
     print(f"\n📋  待审批特权码 ({len(pending)} 个)")
     print("-" * 60)
     for entry in pending:
-        cmds = ", ".join(c.get("command", "?") for c in entry.get("commands", []))
+        request_type = entry.get("request_type", "privileged")
+        if request_type == "scheduled_task_policy":
+            policy = entry.get("approval_policy") or {}
+            cmds = "scheduled_task_policy: " + ", ".join(
+                str(x) for x in policy.get("allowedTools", [])
+            )
+        else:
+            cmds = ", ".join(c.get("command", "?") for c in entry.get("commands", []))
         print(f"  Code:     {entry.get('code', '?')}")
+        print(f"  类型:     {request_type}")
+        if entry.get("task_id") is not None:
+            print(f"  Task ID:  {entry.get('task_id')}")
         print(f"  原因:     {entry.get('reason', '?')[:60]}")
         print(f"  操作:     {cmds}")
         print(f"  过期:     {entry.get('requested_at', '?')[:19]}")
@@ -392,7 +422,14 @@ def cmd_history():
         code = entry.get("code", "?")
         status = entry.get("status", "?")
         reason = entry.get("reason", "?")[:40]
-        cmds = ", ".join(c.get("command", "?") for c in entry.get("commands", []))
+        request_type = entry.get("request_type", "privileged")
+        if request_type == "scheduled_task_policy":
+            policy = entry.get("approval_policy") or {}
+            cmds = "scheduled_task_policy: " + ", ".join(
+                str(x) for x in policy.get("allowedTools", [])
+            )
+        else:
+            cmds = ", ".join(c.get("command", "?") for c in entry.get("commands", []))
 
         status_icon = {
             "approved": "✅",
@@ -402,7 +439,7 @@ def cmd_history():
             "consumed": "✅",
         }.get(status, "❓")
 
-        print(f"  {status_icon} {code}  [{status}]  {reason}")
+        print(f"  {status_icon} {code}  [{status}]  [{request_type}]  {reason}")
         print(f"     {cmds}")
         print(f"     {entry.get('requested_at', '?')[:19]}")
         print()

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,79 @@ class AgentGatewayService(Singleton):
     def switchMode(self, sessionId: str, mode: AgentMode) -> bool:
         """切换 Agent 运行模式（即时生效）。"""
         return self._runner.switchMode(sessionId, mode)
+
+    async def createEphemeralRun(
+        self,
+        userId: int,
+        title: str,
+        message: str,
+        timeoutSeconds: float = 1800.0,
+        scheduledApprovalPolicy: dict | None = None,
+        includeCoreTools: bool = False,
+    ) -> dict[str, Any]:
+        """创建临时会话并通过 BackgroundRunner 执行一次后台 Agent。"""
+        defaultProfile = self.profileService.getDefaultProfile()
+        request = AgentSessionCreate(
+            title=title[:100] or "后台 Agent 任务",
+            profileId=defaultProfile.profileId if defaultProfile else None,
+            mode="agent",
+            safetyPolicy="default",
+        )
+        session = self.sessionDao.createSession(
+            sessionId=self._newSessionId(),
+            userId=userId,
+            request=request,
+        )
+        sessionId = session.sessionId
+        self.sessionDao.updateStatus(sessionId, "running")
+
+        started = time.time()
+        buffer = await self._runner.submit(
+            userId,
+            sessionId,
+            message,
+            nonInteractiveApprovals=True,
+            scheduledApprovalPolicy=scheduledApprovalPolicy,
+            includeCoreTools=includeCoreTools,
+        )
+        errorMessage: str | None = None
+        while True:
+            state = await buffer.getState()
+            events = await buffer.readSince(-1)
+            for event in events:
+                if event.get("type") == "error":
+                    data = event.get("data") or {}
+                    errorMessage = str(data.get("message") or "")
+            if state["done"]:
+                break
+            if time.time() - started > timeoutSeconds:
+                await self._runner.cancel(sessionId)
+                errorMessage = f"后台 Agent 执行超时（{int(timeoutSeconds)} 秒）"
+                break
+            await asyncio.sleep(0.2)
+
+        events = await buffer.readSince(-1)
+        textParts: list[str] = []
+        for event in events:
+            if event.get("type") == "text.delta":
+                data = event.get("data") or {}
+                textParts.append(str(data.get("content") or ""))
+            elif event.get("type") == "error":
+                data = event.get("data") or {}
+                errorMessage = errorMessage or str(data.get("message") or "")
+
+        fullReport = "".join(textParts).strip()
+        status = "error" if errorMessage else "success"
+        return {
+            "sessionId": sessionId,
+            "status": status,
+            "summary": self._summarizeRunOutput(fullReport, errorMessage),
+            "fullReport": fullReport,
+            "errorMessage": errorMessage,
+            "tokenUsage": self.tokenUsageDao.getSessionBilling(sessionId),
+            "durationMs": int((time.time() - started) * 1000),
+            "events": events,
+        }
 
     # ── WebSocket Handler ──
 
@@ -1001,3 +1075,10 @@ class AgentGatewayService(Singleton):
     def _newSessionId() -> str:
         from agent.shared.id_gen import gen_session_id
         return gen_session_id()
+
+    @staticmethod
+    def _summarizeRunOutput(fullReport: str, errorMessage: str | None) -> str:
+        if errorMessage:
+            return errorMessage[:500]
+        text = " ".join(fullReport.split())
+        return text[:500]

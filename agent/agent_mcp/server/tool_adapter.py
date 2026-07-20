@@ -8,6 +8,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from internal_rpc import BackendRpcClient, BackendRpcError
+
 try:
     from ndlmpanel_agent.mcp.protocol.schemas import functionToMcpToolSchema
 except ModuleNotFoundError:  # Allows `python -m agent_mcp` from ndlmpanel_agent/.
@@ -101,6 +103,66 @@ def ask_choice(
     return "[等待用户选择...]"
 
 
+def createScheduledTask(
+    name: str,
+    cronExpression: str,
+    taskDescription: str,
+    approvalPolicy: dict[str, Any] | None = None,
+) -> dict:
+    """创建定时任务，到指定 cron 时间自动执行 taskDescription 描述的任务。
+
+    Args:
+        name: 任务名称
+        cronExpression: 5 段 crontab 表达式，例如 "0 8 * * *"
+        taskDescription: 到时间后交给后台 Agent 执行的任务描述
+        approvalPolicy: 可选预授权策略，包含 allowedTools / allowedPaths 等字段
+    """
+    params = {
+        "name": name,
+        "cronExpression": cronExpression,
+        "taskDescription": taskDescription,
+    }
+    if approvalPolicy is not None:
+        params["approvalPolicy"] = approvalPolicy
+    return _callBackendRpc(
+        "scheduledTasks.create",
+        params,
+    )
+
+
+def listScheduledTasks(status: str = "") -> dict:
+    """列出定时任务，可用 status 筛选 active / paused。"""
+    return _callBackendRpc("scheduledTasks.list", {"status": status or ""})
+
+
+def deleteScheduledTask(taskId: int) -> dict:
+    """删除指定定时任务。"""
+    return _callBackendRpc("scheduledTasks.delete", {"taskId": taskId})
+
+
+def pauseScheduledTask(taskId: int) -> dict:
+    """暂停指定定时任务。"""
+    return _callBackendRpc("scheduledTasks.pause", {"taskId": taskId})
+
+
+def resumeScheduledTask(taskId: int) -> dict:
+    """恢复指定定时任务。"""
+    return _callBackendRpc("scheduledTasks.resume", {"taskId": taskId})
+
+
+def _callBackendRpc(method: str, params: dict[str, Any]) -> dict:
+    try:
+        data = BackendRpcClient().call(method, params)
+        return data if isinstance(data, dict) else {"success": True, "data": data}
+    except BackendRpcError as exc:
+        return {
+            "success": False,
+            "errorCode": exc.errorCode,
+            "errorMessage": exc.errorMessage,
+            "errorDetails": exc.errorDetails,
+        }
+
+
 TOOL_RISK_LEVELS: dict[str, str] = {
     "getWorkspaceContext": "read_only",
     "listFiles": "read_only",
@@ -134,6 +196,11 @@ TOOL_RISK_LEVELS: dict[str, str] = {
     "getRecentCommandResults": "read_only",
     "submitPlan": "read_only",
     "ask_choice": "read_only",
+    "createScheduledTask": "write",
+    "listScheduledTasks": "read_only",
+    "deleteScheduledTask": "write",
+    "pauseScheduledTask": "write",
+    "resumeScheduledTask": "write",
     "runCommand": "dangerous",
     "webFetch": "read_only",
     "webSearch": "read_only",
@@ -173,6 +240,11 @@ TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
     "getRecentCommandResults": {"agentCore": True},
     "submitPlan": {"agentCore": True, "planSubmission": True},
     "ask_choice": {"agentCore": True, "elicitation": True},
+    "createScheduledTask": {"agentCore": True},
+    "listScheduledTasks": {"agentCore": True},
+    "deleteScheduledTask": {"agentCore": True},
+    "pauseScheduledTask": {"agentCore": True},
+    "resumeScheduledTask": {"agentCore": True},
     "runCommand": {
         "agentCore": True,
         "usesShell": False,
@@ -224,6 +296,11 @@ AGENT_TOOL_FUNCTIONS: tuple[Callable[..., Any], ...] = (
     getRecentCommandResults,
     submitPlan,
     ask_choice,
+    createScheduledTask,
+    listScheduledTasks,
+    deleteScheduledTask,
+    pauseScheduledTask,
+    resumeScheduledTask,
     webFetch,
     webSearch,
     runCommand,

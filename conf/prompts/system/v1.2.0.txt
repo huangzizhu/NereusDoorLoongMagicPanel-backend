@@ -103,4 +103,12 @@ submitElevation(
 > ⚠ 所有特权操作都必须填写 reason 参数说明操作原因，并需要管理员审批确认。
 > ⚠ 审批通过后，使用 `runPrivileged(token_id, command_index, args, session_id)` 执行具体命令。
 
+## 定时任务能力
 
+当用户要求“每天/每周/每隔一段时间帮我执行某项检查或操作”时，使用定时任务工具：
+- `createScheduledTask` 创建定时任务，`cronExpression` 使用 5 段 crontab 表达式，`taskDescription` 写清到点后要执行的完整任务。
+- `listScheduledTasks` 查看定时任务。
+- `pauseScheduledTask` / `resumeScheduledTask` 暂停或恢复任务。
+- `deleteScheduledTask` 删除任务。
+
+定时任务到点后会由后台 Agent 执行，不依赖当前 WebSocket 连接。不要使用 `break_glass` 创建定时任务。

@@ -93,9 +93,22 @@ class AdminController(AbstractController):
             if not code:
                 return Response.error(msg="缺少 code")
 
+            entry = self.elevation_service.get_code(code)
             token = self.elevation_service.approve_code(code, approved_by)
             if token is None:
                 return Response.error(msg="批准失败：code 不存在或状态不是 pending")
+
+            request_type = getattr(entry, "request_type", "privileged") if entry else "privileged"
+            task_id = getattr(entry, "task_id", None) if entry else None
+            if request_type == "scheduled_task_policy" and task_id is not None:
+                from gateway.service.ScheduledTaskService import ScheduledTaskService
+                ok = ScheduledTaskService().approveScheduledTaskPolicy(
+                    int(task_id),
+                    approved_by,
+                    token.token_id,
+                )
+                if not ok:
+                    return Response.error(msg="批准失败：定时任务不存在或状态不是 pending_approval")
 
             # 推送 WS 事件通知前端（async handler 可直接 await）
             from gateway.service.AgentGatewayService import AgentGatewayService
@@ -103,6 +116,8 @@ class AdminController(AbstractController):
             await gw.pushElevationEvent(
                 token.session_id, "elevation.resolved", {
                     "status": "approved",
+                    "request_type": request_type,
+                    "taskId": task_id,
                     "code": code,
                     "token_id": token.token_id,
                     "message": "管理员已批准特权请求，Agent 可继续执行",
@@ -111,9 +126,11 @@ class AdminController(AbstractController):
 
             return Response.success(data={
                 "status": "approved",
+                "request_type": request_type,
                 "code": code,
                 "token_id": token.token_id,
                 "session_id": token.session_id,
+                "taskId": task_id,
                 "max_ops": token.max_ops,
                 "allowed_commands": token.allowed_commands,
             })
@@ -133,19 +150,31 @@ class AdminController(AbstractController):
             entry = self.elevation_service.get_code(code)
             if entry:
                 self.elevation_service.reject_code(code, reason)
+                request_type = getattr(entry, "request_type", "privileged")
+                task_id = getattr(entry, "task_id", None)
+                if request_type == "scheduled_task_policy" and task_id is not None:
+                    from gateway.service.ScheduledTaskService import ScheduledTaskService
+                    ScheduledTaskService().rejectScheduledTaskPolicy(int(task_id), reason)
                 # 推送 WS 事件通知前端
                 from gateway.service.AgentGatewayService import AgentGatewayService
                 gw = AgentGatewayService()
                 await gw.pushElevationEvent(
                     entry.session_id, "elevation.resolved", {
                         "status": "rejected",
+                        "request_type": request_type,
+                        "taskId": task_id,
                         "code": code,
                         "reason": reason,
                         "message": "管理员已拒绝特权请求",
                     }
                 )
 
-            return Response.success(data={"status": "rejected", "code": code})
+            return Response.success(data={
+                "status": "rejected",
+                "code": code,
+                "request_type": getattr(entry, "request_type", "privileged") if entry else None,
+                "taskId": getattr(entry, "task_id", None) if entry else None,
+            })
 
         @self.router.post("/revoke")
         def revoke_token(body: dict) -> ResponseModel:
@@ -179,6 +208,20 @@ class AdminController(AbstractController):
 
             commands = entry.commands
             script_content = None
+
+            if getattr(entry, "request_type", "privileged") == "scheduled_task_policy":
+                return Response.success(data={
+                    "code": code,
+                    "audit": {
+                        "risk_level": "MEDIUM",
+                        "summary": "定时任务预授权策略，请人工核对允许工具和目录范围",
+                        "findings": [],
+                        "dangerous_commands": [],
+                        "network_requests": False,
+                        "nested_execution": False,
+                        "ai_advice": "确认 allowedTools、allowedPaths、deniedPaths 是否符合最小权限原则",
+                    },
+                })
 
             # 检测脚本通道（script_path 指定了脚本文件）
             if entry.script_path:

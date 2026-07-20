@@ -48,11 +48,17 @@ class ElevationCodeEntry:
         inline_cmd_hash: str | None = None,
         script_path: str | None = None,
         script_hash: str | None = None,
+        request_type: str = "privileged",
+        task_id: int | None = None,
+        approval_policy: dict[str, Any] | None = None,
     ):
         self.code = code
         self.session_id = session_id
         self.commands = commands  # [{"command": "mkdir", "args": [...]}, ...]
         self.reason = reason
+        self.request_type = request_type
+        self.task_id = task_id
+        self.approval_policy = approval_policy or {}
         self.status = STATUS_PENDING
         self.ttl_seconds = ttl_seconds
         self.max_ops = max_ops
@@ -81,6 +87,9 @@ class ElevationCodeEntry:
         return {
             "code": self.code,
             "session_id": self.session_id,
+            "request_type": self.request_type,
+            "task_id": self.task_id,
+            "approval_policy": self.approval_policy,
             "commands": self.commands,
             "reason": self.reason,
             "status": self.status,
@@ -204,6 +213,9 @@ class ElevationService(Singleton):
         inline_cmd_hash: str | None = None,
         script_path: str | None = None,
         script_hash: str | None = None,
+        request_type: str = "privileged",
+        task_id: int | None = None,
+        approval_policy: dict[str, Any] | None = None,
     ) -> ElevationCodeEntry:
         """生成一个新的特权码。
 
@@ -218,6 +230,7 @@ class ElevationService(Singleton):
             inline_cmd_hash: Channel 1 — SHA256(inline_cmd)
             script_path: Channel 2 — 脚本文件路径
             script_hash: Channel 2 — SHA256(script_content)
+            request_type: privileged 或 scheduled_task_policy
 
         Returns:
             ElevationCodeEntry (status=pending)
@@ -237,6 +250,9 @@ class ElevationService(Singleton):
             inline_cmd_hash=inline_cmd_hash,
             script_path=script_path,
             script_hash=script_hash,
+            request_type=request_type,
+            task_id=task_id,
+            approval_policy=approval_policy,
         )
         with self._lock:
             # 如果该 session 已有 pending code，标记为过期
@@ -253,8 +269,8 @@ class ElevationService(Singleton):
             self._sessions[session_id] = code
 
         logger.info(
-            "code=%s session=%s commands=%d reason=%s ttl=%d max_ops=%d",
-            code, session_id, len(commands), reason[:50], ttl_seconds, max_ops,
+            "code=%s type=%s session=%s task=%s commands=%d reason=%s ttl=%d max_ops=%d",
+            code, request_type, session_id, task_id, len(commands), reason[:50], ttl_seconds, max_ops,
         )
         return entry
 
