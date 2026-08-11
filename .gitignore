@@ -29,3 +29,6 @@ panel.db
 # Agent workspace
 workspace/
 
+# 金丝雀令牌状态（部署级运行时生成，轮换后变化，不应入库）
+runtime/canary.json
+

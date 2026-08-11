@@ -74,6 +74,29 @@ class SystemInfoDao(SystemInfoDaoInterface):
         finally:
             session.close()
 
+    def createAlert(self, level: int, message: str) -> AlertEvent:
+        """创建一条告警记录（0:Info 1:Warning 2:Error）。
+
+        供 Agent 安全链路（金丝雀泄露、注入分类拦截等）写入告警。
+        message 超出列宽 500 时截断，避免 DB 报错。
+        """
+        session = self.SessionLocal()
+        try:
+            orm = AlertEventOrm(
+                level=int(level),
+                message=str(message)[:500],
+                status=0,
+            )
+            session.add(orm)
+            session.commit()
+            session.refresh(orm)
+            return AlertEvent.model_validate(orm)
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
 
 
 

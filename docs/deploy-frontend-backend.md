@@ -117,7 +117,7 @@ TAVILY_API_KEY=请替换为真实TavilyKey
 # ── Agent 运行配置 ──
 NDLM_SAFETY_POLICY=default
 NDLM_EXECUTION_USER=backend
-NDLM_TRACE_DB_PATH=runtime/sqlite/traces.db
+# trace 审计已合并到主库 agent_trace_logs 表，无需 NDLM_TRACE_DB_PATH
 NDLM_TOOL_TIMEOUT_SECONDS=60
 NDLM_MAX_TOOL_ROUNDS=0
 NDLM_MAX_TOOL_CALLS_PER_ROUND=0

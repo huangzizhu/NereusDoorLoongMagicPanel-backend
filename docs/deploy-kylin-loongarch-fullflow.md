@@ -43,12 +43,30 @@ sudo install -d -o backend -g backend -m 0750 /opt/nereus/backend
 sudo install -d -o root -g root -m 0755 /opt/nereus/frontend
 sudo install -d -o root -g root -m 0755 /opt/nereus/frontend/dist
 sudo install -d -o root -g root -m 0750 /etc/nereus
-sudo install -d -o root -g root -m 0750 /run/ndlmpanel
+sudo install -d -o root -g backend -m 0770 /run/ndlmpanel
 sudo install -d -o root -g root -m 0750 /opt/ndlmpanel
 sudo install -d -o root -g root -m 0750 /opt/ndlmpanel/tmp_scripts
 sudo install -d -o backend -g backend -m 0750 /var/log/nereus
 sudo install -d -o root -g root -m 0755 /etc/nginx /var/www /etc/docker /etc/letsencrypt /etc/mysql
 ```
+
+> **`/run/ndlmpanel` 必须允许后端用户进入并写入**：后端要在其中创建 `backend-rpc.sock`，特权代理创建的 `privileged-agent.sock` 也要能被后端读取，所以目录属组必须是 `backend`、权限 `0770`（不是 `0750 root:root`，否则后端启动直接 `PermissionError`）。建议同时用 tmpfiles 声明，保证重启后依然正确：
+
+```bash
+sudo tee /etc/tmpfiles.d/nereus.conf >/dev/null <<'EOF'
+d /run/ndlmpanel 0770 root backend -
+EOF
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/nereus.conf
+```
+
+> **backend 的 home 目录必须真实存在**：`useradd` 的 `--home-dir` 只是登记路径，实际目录可能落在别处（例如默认 `/home/backend`）。部署后务必确认：
+
+```bash
+getent passwd backend   # 看 home 字段
+sudo ls -ld /home/backend /var/lib/nereus/backend-home 2>/dev/null  # 至少一个存在
+```
+
+> 若目标机未安装 `rsync`（麒麟 V11 默认不带），`dnf install -y rsync` 未执行时可用 `cp -a` 替代：`sudo cp -a /tmp/nereus-backend/. /opt/nereus/backend/`。
 
 ## 2. 解压并发布文件
 
@@ -217,7 +235,7 @@ sudo chmod 0600 /etc/nereus/privileged-agent.env
 
 `ReadWritePaths` 里的目录必须先创建：
 
-- `/run/ndlmpanel`
+- `/run/ndlmpanel`（由 `/etc/tmpfiles.d/nereus.conf` 创建，见第 1 节）
 - `/opt/ndlmpanel`
 - `/etc/nginx`
 - `/var/www`
@@ -226,6 +244,11 @@ sudo chmod 0600 /etc/nereus/privileged-agent.env
 - `/etc/mysql`
 
 如果不需要某项能力，可以从 `ReadWritePaths` 中删掉，但保留的路径必须真实存在。
+
+> **CapabilityBoundingSet 坑（必看）**：上面的 `CapabilityBoundingSet` 必须包含 `CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN`，缺了会导致两个典型故障：
+> - 缺 `CAP_DAC_OVERRIDE` / `CAP_DAC_READ_SEARCH`：`/opt/nereus/backend` 权限是 `750 backend:backend`，systemd 服务进程即使 UID=0 也读不了代码目录，`python -m privileged_agent.server` 报 `ModuleNotFoundError`（手动跑却正常）；
+> - 缺 `CAP_CHOWN`：代理无法把 socket `chown` 成 `root:backend`，报 `PermissionError: [Errno 1] Operation not permitted`。
+> 排查时可对比：`sudo systemctl status nereus-privileged-agent` 若在 `activating (auto-restart)` 循环且日志是上述错误，基本就是这个原因。
 
 systemd unit：
 
@@ -252,10 +275,11 @@ PrivateTmp=yes
 ProtectSystem=strict
 ReadWritePaths=/run/ndlmpanel /opt/ndlmpanel /etc/nginx /var/www /etc/docker /etc/letsencrypt /etc/mysql
 NoNewPrivileges=yes
-RuntimeDirectory=ndlmpanel
-RuntimeDirectoryMode=0750
+# 注意：/run/ndlmpanel 由 /etc/tmpfiles.d/nereus.conf 创建（0770 root:backend），
+# 不要再写 RuntimeDirectory=ndlmpanel，否则 systemd 会在每次启动时把它重置为 root:root 0750，
+# 导致后端无法进入目录（PermissionError）。若一定要用 RuntimeDirectory，请把模式设为 0775 以上并保证 backend 组可写。
 RemoveIPC=yes
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 MemoryMax=256M
 MemoryHigh=192M
@@ -282,6 +306,18 @@ ls -l /run/ndlmpanel/privileged-agent.sock
 ## 8. 配置后端
 
 后端服务建议使用 `LoadCredential`。如果暂时只想命令行启动，也至少要显式 `PYTHONPATH=/opt/nereus/backend`。
+
+启动前先创建后端运行目录（agent 需要 workspace，日志需要 runtime/logs）：
+
+```bash
+sudo install -d -o backend -g backend -m 0750 /opt/nereus/backend/workspace
+sudo install -d -o backend -g backend -m 0750 /opt/nereus/backend/runtime/logs
+sudo install -d -o backend -g backend -m 0750 /var/log/nereus
+```
+
+> `NDLM_TRACE_DB_PATH` 无需配置：trace 审计已并入主库 `panel.db` 的 `agent_trace_logs` 表，部署不需要 `runtime/sqlite/traces.db`。
+
+`/etc/nereus/backend.env` 由部署人员按现场填写。**LLM 配置（provider / endpoint / api_key / model）由数据库管理**——在面板的"配置 → API Key / LLM Profiles"里维护，后端通过默认 profile 读取，**不要**在 `backend.env` 里设 `NDLM_LLM_PROVIDER` / `NDLM_LLM_MODEL`（会覆盖数据库配置，且 mock 只用于兜底）。`backend.env` 里只需要安全/运行时配置（模板见 `docs/deploy-frontend-backend.md` 第 3.1 节，删去 LLM 相关行即可）；文件须 `root:root 0600`。
 
 systemd unit：
 
@@ -412,11 +448,22 @@ sudo systemctl status nereus-backend --no-pager
 sudo systemctl status nginx --no-pager
 
 ls -l /run/ndlmpanel/privileged-agent.sock
+ls -l /run/ndlmpanel/backend-rpc.sock
 ss -lntp | grep ':8000'
 curl -I http://127.0.0.1/
 curl -I http://127.0.0.1/api/agent/sessions
 sudo nereus list-pending
 ```
+
+期望结果：
+
+- 三个服务均为 `active (running)` / `enabled`
+- `/run/ndlmpanel/` 目录权限 `drwxrwx--- root backend`
+- `privileged-agent.sock` 为 `srw-rw---- root backend`
+- `backend-rpc.sock` 为 `srw-rw---- backend backend`
+- `curl http://127.0.0.1/` 返回前端页面（200）
+- `curl http://127.0.0.1/api/agent/sessions` 返回 401（后端存活、鉴权生效，说明 `/api/` 前缀重写与转发成功）
+- `sudo nereus list-pending` 输出"没有待审批的特权码"（CLI → admin_token → 后端 → 特权代理全链路打通）
 
 ## 11. 常见坑
 
@@ -426,4 +473,8 @@ sudo nereus list-pending
 - `panel.db` 不属于 `backend:backend` 或目录不可写，SQLite 启动时会失败。
 - 前端 API 前缀不是 `/api`，但 Nginx 还按 `/api/` 去重写。
 - `proxy_pass` 末尾少了 `/`，导致 `/api` 前缀没有被剥掉。
+- 从开发机打包代码时，检查 `pyproject.toml` 的 `[tool.ndlmpanel-agent] workspace_dir` 不能是开发机绝对路径（应为空，自动推断到项目根 `workspace/`），并确认 `/opt/nereus/backend/workspace` 已创建且属主 `backend:backend`。
+- `CapabilityBoundingSet` 缺 `CAP_DAC_OVERRIDE` / `CAP_DAC_READ_SEARCH` / `CAP_CHOWN`：特权代理 `python -m privileged_agent.server` 报 `ModuleNotFoundError` 或 `chown` 报 `Operation not permitted`，服务在 `activating (auto-restart)` 无限循环（手动运行却正常）。这是最隐蔽的坑。
+- `/run/ndlmpanel` 目录是 `root:root 0750`：后端启动报 `PermissionError: ... '/run/ndlmpanel/backend-rpc.sock'`（进不去目录、写不了）。目录必须是 `0770 root:backend` 且不能用 `RuntimeDirectory` 覆盖成 `0750`。
+- 目标机没有 `rsync`：文档示例命令会静默失败（`&&` 不执行、目录为空），先 `dnf install -y rsync`，或改用 `cp -a`。
 

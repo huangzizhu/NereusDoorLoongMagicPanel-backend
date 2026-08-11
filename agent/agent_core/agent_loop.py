@@ -9,11 +9,14 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Callable
 from enum import Enum
 from agent.shared.types import EventType, LLMResponse, ToolRiskLevel
 from agent.shared.id_gen import gen_tool_call_id
 from agent.integration.event_stream import EventStream
 from agent.safety.injection_detector import checkPromptInjection
+from agent.safety.canary import CanaryManager
+from agent.safety.llm_classifier import InjectionClassifier
 from agent.safety.rule_engine import RuleEngine
 from ndlmpanel_agent.mcp.server.registry import ToolRegistry
 from ndlmpanel_agent.mcp.server.dispatcher import McpDispatcher
@@ -102,12 +105,19 @@ class AgentCore:
         autoApproveScheduled: bool = False,
         nonInteractiveApprovals: bool = False,
         scheduledApprovalPolicy: dict | None = None,
+        injectionClassifier: InjectionClassifier | None = None,
+        canary: CanaryManager | None = None,
+        alertSink: Callable[[int, str], None] | None = None,
     ):
         self._llm = llmProvider
         self._registry = registry
         self._dispatcher = dispatcher
         self._safety = safety
         self._promptBuilder = promptBuilder
+        self._injectionClassifier = injectionClassifier
+        self._canary = canary
+        # 告警回调：level(0 Info/1 Warning/2 Error), message → 写入 alert_events
+        self._alertSink = alertSink
         self._maxRounds = maxRounds
         self._maxTokens = maxTokens
         self._contextWindow = contextWindow
@@ -278,10 +288,32 @@ class AgentCore:
         # 注入检测 → trace
         if checkPromptInjection(userMessage):
             self._trace(traceId, sessionId, "injection.detected",
-                        {"input": userMessage[:200]})
+                        {"source": "regex", "input": userMessage[:200]})
+            self._emitAlert(
+                1, "检测到用户输入包含提示词注入特征（正则快筛），已拒绝")
             stream.emit(EventType.ERROR, {"message": "检测到 Prompt Injection"})
             stream.emit(EventType.DONE)
             return
+
+        # ── 组合拳第二层：第三方 LLM 分类器（抽检/全检测）──
+        if (self._injectionClassifier is not None
+                and self._injectionClassifier.shouldCheck()):
+            verdict = await self._injectionClassifier.classify(userMessage)
+            if verdict.checked and verdict.injection:
+                self._trace(traceId, sessionId, "injection.detected", {
+                    "source": "classifier",
+                    "confidence": verdict.confidence,
+                    "reason": verdict.reason,
+                    "input": userMessage[:200],
+                })
+                self._emitAlert(
+                    2,
+                    f"检测到用户输入提示词注入（LLM 分类器，置信度 "
+                    f"{verdict.confidence:.2f}）",
+                )
+                stream.emit(EventType.ERROR, {"message": "检测到 Prompt Injection"})
+                stream.emit(EventType.DONE)
+                return
         self._trace(traceId, sessionId, "input.received",
                     {"input": userMessage[:200]})
 
@@ -359,6 +391,35 @@ class AgentCore:
                     finish_reason=finishReason or "stop",
                     usage=usage,
                 )
+
+                # ── 金丝雀输出侧检测：模型回复（文本+工具参数）泄露令牌 → 拦截并轮换 ──
+                if self._canary is not None and self._canary.enabled:
+                    out_text = response.content or ""
+                    for tc in toolCalls:
+                        out_text += json.dumps(
+                            tc.get("arguments", {}), ensure_ascii=False)
+                    if self._canary.leakedIn(out_text):
+                        self._trace(traceId, sessionId, "canary.leaked", {
+                            "round": roundCount,
+                            "content_len": len(response.content or ""),
+                            "tool_calls": len(toolCalls),
+                        })
+                        self._canary.rotate()
+                        self._emitAlert(
+                            2,
+                            "检测到系统提示词泄露（金丝雀令牌泄露），"
+                            "已拦截本轮并轮换安全令牌",
+                        )
+                        stream.emit(EventType.ERROR, {
+                            "message": "检测到系统提示词泄露（金丝雀令牌泄露），"
+                                       "已中止本轮并轮换安全令牌。",
+                        })
+                        self._msgs.append({
+                            "role": "system",
+                            "content": "检测到提示词注入（金丝雀令牌泄露），已中止执行。",
+                        })
+                        state = LoopState.DONE
+                        break
 
                 self._trace(traceId, sessionId, "llm.response", {
                     "round": roundCount,
@@ -445,11 +506,8 @@ class AgentCore:
                             MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
                         )
                         totalToolOutputChars += len(modelToolOutput)
-                        self._msgs.append({
-                            "role": "tool",
-                            "tool_call_id": callId,
-                            "content": modelToolOutput,
-                        })
+                        await self._appendToolMessage(
+                            callId, modelToolOutput, traceId, sessionId)
                         continue
 
                     # ── 拦截 submitPlan（两阶段 Plan 模式）──
@@ -465,11 +523,8 @@ class AgentCore:
                                 "call_id": callId, "tool_name": name,
                                 "success": False, "output": toolOutput,
                             })
-                            self._msgs.append({
-                                "role": "tool",
-                                "tool_call_id": callId,
-                                "content": toolOutput,
-                            })
+                            await self._appendToolMessage(
+                                callId, toolOutput, traceId, sessionId)
                             continue
 
                         # 发出 PLAN_PROPOSED 事件
@@ -488,11 +543,8 @@ class AgentCore:
                             "call_id": callId, "tool_name": name,
                             "success": True, "output": toolOutput,
                         })
-                        self._msgs.append({
-                            "role": "tool",
-                            "tool_call_id": callId,
-                            "content": toolOutput,
-                        })
+                        await self._appendToolMessage(
+                            callId, toolOutput, traceId, sessionId)
 
                         # 进入 PLAN_REVIEW 等待审批
                         hasPendingPlan = True
@@ -512,11 +564,8 @@ class AgentCore:
                             "call_id": callId, "tool_name": name,
                             "success": False, "output": toolOutput,
                         })
-                        self._msgs.append({
-                            "role": "tool",
-                            "tool_call_id": callId,
-                            "content": toolOutput,
-                        })
+                        await self._appendToolMessage(
+                            callId, toolOutput, traceId, sessionId)
                         continue
 
                     risk = self._registry.getRiskLevel(name)
@@ -544,11 +593,8 @@ class AgentCore:
                             MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
                         )
                         totalToolOutputChars += len(modelToolOutput)
-                        self._msgs.append({
-                            "role": "tool",
-                            "tool_call_id": callId,
-                            "content": modelToolOutput,
-                        })
+                        await self._appendToolMessage(
+                            callId, modelToolOutput, traceId, sessionId)
                         continue
 
                     verdict, reason = self._safety.checkToolCallWithReason(
@@ -588,11 +634,8 @@ class AgentCore:
                             MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
                         )
                         totalToolOutputChars += len(modelToolOutput)
-                        self._msgs.append({
-                            "role": "tool",
-                            "tool_call_id": callId,
-                            "content": modelToolOutput,
-                        })
+                        await self._appendToolMessage(
+                            callId, modelToolOutput, traceId, sessionId)
                         continue
                     elif verdict.value == "require_confirm":
                         if self._nonInteractiveApprovals or self._autoApproveScheduled:
@@ -646,11 +689,8 @@ class AgentCore:
                                     MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
                                 )
                                 totalToolOutputChars += len(modelToolOutput)
-                                self._msgs.append({
-                                    "role": "tool",
-                                    "tool_call_id": callId,
-                                    "content": modelToolOutput,
-                                })
+                                await self._appendToolMessage(
+                                    callId, modelToolOutput, traceId, sessionId)
                                 continue
                         else:
                             self._trace(traceId, sessionId, "approval.requested", {
@@ -678,11 +718,8 @@ class AgentCore:
                         MAX_TOTAL_TOOL_OUTPUT_CHARS_PER_ROUND - totalToolOutputChars,
                     )
                     totalToolOutputChars += len(modelToolOutput)
-                    self._msgs.append({
-                        "role": "tool",
-                        "tool_call_id": callId,
-                        "content": modelToolOutput,
-                    })
+                    await self._appendToolMessage(
+                        callId, modelToolOutput, traceId, sessionId)
 
                 if hasPendingPlan:
                     state = LoopState.PLAN_REVIEW
@@ -859,6 +896,67 @@ class AgentCore:
                 msg["content"] = newContent
                 break
 
+    async def _appendToolMessage(self, callId: str, content: str,
+                                 traceId: str, sessionId: str) -> str:
+        """将工具输出追加到对话历史，并对输出做注入过滤（间接注入防线）。
+
+        工具输出属于不可信外部数据（文件内容、网页、MCP 返回值等），
+        在进入模型上下文前依次经过：
+          1. 正则快筛（checkPromptInjection）— 命中直接替换为警示文本；
+          2. 第三方 LLM 分类器抽检（injection_llm_mode）— 判定注入则替换。
+
+        无论是否过滤，原始输出都会写入审计 trace（tool_output.injection），
+        便于事后核对与降低误报影响。
+
+        Args:
+            callId: 对应 tool_call_id
+            content: 工具输出原始文本
+            traceId / sessionId: 审计 trace 标识
+
+        Returns:
+            实际写入对话历史的文本（可能已被替换为警示）。
+        """
+        sanitized = content
+        # 1) 正则快筛
+        if checkPromptInjection(content):
+            self._trace(traceId, sessionId, "tool_output.injection", {
+                "source": "regex",
+                "output_len": len(content),
+                "sample": content[:200],
+            })
+            self._emitAlert(
+                1, "工具输出被过滤：检测到提示词注入特征（正则快筛）")
+            sanitized = (
+                "[工具输出已过滤] 检测到输出包含提示词注入特征，未回传模型。"
+            )
+        # 2) 分类器抽检
+        elif (self._injectionClassifier is not None
+              and self._injectionClassifier.shouldCheck()):
+            verdict = await self._injectionClassifier.classify(content)
+            if verdict.checked and verdict.injection:
+                self._trace(traceId, sessionId, "tool_output.injection", {
+                    "source": "classifier",
+                    "confidence": verdict.confidence,
+                    "reason": verdict.reason,
+                    "output_len": len(content),
+                    "sample": content[:200],
+                })
+                self._emitAlert(
+                    1,
+                    f"工具输出被过滤：LLM 分类器判定包含注入意图"
+                    f"（置信度 {verdict.confidence:.2f}）",
+                )
+                sanitized = (
+                    "[工具输出已过滤] 安全检测判定输出包含提示词注入意图"
+                    f"（置信度 {verdict.confidence:.2f}），未回传模型。"
+                )
+        self._msgs.append({
+            "role": "tool",
+            "tool_call_id": callId,
+            "content": sanitized,
+        })
+        return sanitized
+
     async def _waitForPlanApproval(self, stream: EventStream,
                                     plan, callId: str) -> None:
         """等待计划审批结果。
@@ -1016,6 +1114,21 @@ class AgentCore:
         """记录审计事件（若已注入 TraceRecorder）。"""
         if self._recorder is not None:
             self._recorder.record(traceId, sessionId, eventType, data)
+
+    def _emitAlert(self, level: int, message: str) -> None:
+        """写入告警（alert_events 表）。告警写入失败不阻断 Agent 主流程。
+
+        Args:
+            level: 0 Info / 1 Warning / 2 Error
+            message: 告警内容（超出 500 字符截断，匹配表列宽）
+        """
+        if self._alertSink is None:
+            return
+        try:
+            self._alertSink(int(level), str(message)[:500])
+        except Exception:
+            # 不记录 message 原文（可能含敏感内容），仅记级别
+            _logger.warning("告警写入失败（level=%s），不影响 Agent 主流程", level)
 
     def _debug_write(self, msg: str):
         """写调试日志到文件（避免 print 污染 MCP stdout）。"""

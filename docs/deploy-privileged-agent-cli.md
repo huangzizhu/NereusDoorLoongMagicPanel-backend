@@ -290,10 +290,10 @@ PrivateTmp=yes
 ProtectSystem=strict
 ReadWritePaths=/run/ndlmpanel /opt/ndlmpanel /etc/nginx /var/www /etc/docker /etc/letsencrypt /etc/mysql
 NoNewPrivileges=yes
-RuntimeDirectory=ndlmpanel
-RuntimeDirectoryMode=0750
+# 注意：/run/ndlmpanel 需为 0770 root:backend（由 tmpfiles 或手动 install 创建），
+# 不要写 RuntimeDirectory=ndlmpanel（会把目录重置为 root:root 0750，后端将无法访问）。
 RemoveIPC=yes
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 MemoryMax=256M
 MemoryHigh=192M

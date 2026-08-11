@@ -26,3 +26,7 @@ class SystemInfoDaoInterface(Singleton):
     @abstractmethod
     def setAlertsProcess(self, id: int) -> int:
         pass
+
+    @abstractmethod
+    def createAlert(self, level: int, message: str) -> AlertEvent:
+        pass

@@ -21,6 +21,10 @@ _BUILTIN: dict[str, Any] = {
     "max_tool_calls_per_round": 0,
     "workspace_dir": "",
     "llm_temperature": 0.1, "llm_retry_count": 3, "llm_retry_delay": 2.0,
+    # ── 提示词注入防护 ──
+    "canary_enabled": True,
+    "injection_llm_mode": "sampling",
+    "injection_sampling_rate": 0.1,
 }
 
 _ENV_MAP = {
@@ -34,11 +38,15 @@ _ENV_MAP = {
     "LLM_TEMPERATURE": "llm_temperature",
     "LLM_RETRY_COUNT": "llm_retry_count",
     "LLM_RETRY_DELAY": "llm_retry_delay",
+    "CANARY_ENABLED": "canary_enabled",
+    "INJECTION_LLM_MODE": "injection_llm_mode",
+    "INJECTION_SAMPLING_RATE": "injection_sampling_rate",
 }
 
 _INT_FIELDS = {"llm_max_tokens", "llm_context_window", "max_tool_rounds", "max_tool_calls_per_round", "tool_timeout_seconds",
                "llm_retry_count"}
-_FLOAT_FIELDS = {"llm_temperature", "llm_retry_delay"}
+_FLOAT_FIELDS = {"llm_temperature", "llm_retry_delay", "injection_sampling_rate"}
+_BOOL_FIELDS = {"canary_enabled"}
 _AGENT_FIELDS = set(AgentConfig.__dataclass_fields__.keys())
 
 
@@ -117,6 +125,8 @@ def _loadEnvOverrides() -> dict[str, Any]:
             elif cfgKey in _FLOAT_FIELDS:
                 try: val = float(val)
                 except ValueError: continue
+            elif cfgKey in _BOOL_FIELDS:
+                val = str(val).strip().lower() in ("1", "true", "yes", "on")
             overrides[cfgKey] = val
     return overrides
 

@@ -140,6 +140,13 @@ class AgentConfig:
     max_tool_calls_per_round: int = 0
     # Agent 工作区目录（空 = 自动从文件路径推断为 workspace/）
     workspace_dir: str = ""
+    # ── 提示词注入防护（组合拳）──
+    # 金丝雀令牌：部署级固定注入 system prompt，输出侧检测泄露并轮换
+    canary_enabled: bool = True
+    # 第三方 LLM 注入分类器模式：off=关闭 | sampling=随机抽检 | full=全检测
+    injection_llm_mode: str = "sampling"
+    # 抽检概率（0.0-1.0），仅 sampling 模式生效
+    injection_sampling_rate: float = 0.1
     # 敏感字段：不进 repr、不应写配置文件
     llm_api_key: str = field(default="", repr=False)
 
@@ -158,6 +165,11 @@ class AgentConfig:
             raise ValueError("llm_retry_delay 不能为负")
         if self.max_tool_calls_per_round < 0:
             raise ValueError("max_tool_calls_per_round 必须 >= 0")
+        if self.injection_llm_mode not in ("off", "sampling", "full"):
+            raise ValueError(
+                "injection_llm_mode 必须是 off/sampling/full 之一")
+        if not 0.0 <= self.injection_sampling_rate <= 1.0:
+            raise ValueError("injection_sampling_rate 必须在 0-1 之间")
 
 
 def dataclass_to_dict(obj) -> dict:

@@ -32,6 +32,10 @@ class MockProvider(LLMProvider):
 
     async def chatStream(self, messages: list[dict]) -> AsyncIterator[LLMResponse]:
         resp = self._nextResponse()
+        if "tool_calls" in resp:
+            yield LLMResponse(content=None, tool_calls=resp["tool_calls"],
+                              finish_reason="tool_calls")
+            return
         content = resp.get("content", "")
         # 每5个字符 yield 一个增量
         for i in range(0, len(content), 5):

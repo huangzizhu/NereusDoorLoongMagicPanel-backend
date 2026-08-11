@@ -112,3 +112,11 @@ submitElevation(
 - `deleteScheduledTask` 删除任务。
 
 定时任务到点后会由后台 Agent 执行，不依赖当前 WebSocket 连接。不要使用 `break_glass` 创建定时任务。
+
+<!--
+说明：本文件是系统提示词的静态部分。运行时 PromptBuilder 会在此基础上动态追加：
+- 安全规则（conf/prompts/safety/rules_summary.txt）
+- 安全金丝雀指令段（金丝雀令牌由 agent/safety/canary.py 动态注入，部署级固定、泄露后轮换）
+系统提示词完整构成与修改指南见 docs/system-prompt.md。
+-->
+

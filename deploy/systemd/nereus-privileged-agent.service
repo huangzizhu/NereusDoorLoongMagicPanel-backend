@@ -37,15 +37,16 @@ ReadWritePaths=/run/ndlmpanel /opt/ndlmpanel /etc/nginx /var/www /etc/docker /et
 # 权限提升防护
 NoNewPrivileges=yes
 
-# 运行时目录（自动创建 /run/ndlmpanel，省去 mkdir）
-RuntimeDirectory=ndlmpanel
-RuntimeDirectoryMode=0750
+# 注意：/run/ndlmpanel 需为 0770 root:backend（由 /etc/tmpfiles.d/nereus.conf 创建），
+# 不要用 RuntimeDirectory=ndlmpanel，否则 systemd 会把它重置为 root:root 0750，
+# 导致后端无法进入目录（PermissionError）。如需保留，请确保模式允许 backend 组读写。
 
 # 进程退出时清理 IPC
 RemoveIPC=yes
 
-# 限制 capabilities
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+# 限制 capabilities：必须含 CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH / CAP_CHOWN，
+# 否则 root 服务读不了 750 的代码目录（ModuleNotFoundError）且无法 chown socket（EPERM）
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 
 # 内存限制（防止 fork bomb）

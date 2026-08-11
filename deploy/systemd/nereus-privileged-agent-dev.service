@@ -35,12 +35,13 @@ ReadWritePaths=/run/ndlmpanel /home/he/workspace
 
 NoNewPrivileges=yes
 
-RuntimeDirectory=ndlmpanel
-RuntimeDirectoryMode=0750
+# 注意：/run/ndlmpanel 需为 0770 root:he（开发组），
+# 不要用 RuntimeDirectory=ndlmpanel，否则 systemd 会把它重置为 root:root 0750，he 将无法访问 socket。
 
 RemoveIPC=yes
 
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+# 限制 capabilities：必须含 CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH / CAP_CHOWN
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 
 MemoryMax=512M

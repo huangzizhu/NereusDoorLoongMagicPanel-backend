@@ -1,10 +1,7 @@
 """事件记录器 — 审计链路追踪。"""
 from __future__ import annotations
-import json
 import logging
-import os
 from datetime import datetime
-from agent.trace_log.storage import TraceStorage
 from agent.trace_log.hash_chain import HashChain
 from agent.trace_log.sanitizer import sanitize
 from gateway.dao.AgentTraceDaoOrm import AgentTraceDaoOrm
@@ -15,21 +12,21 @@ _logger = logging.getLogger("ndlmpanel.trace")
 class TraceRecorder:
     """TraceLog 事件记录器。
 
-    双写：JSONL 文件 + SQLite 数据库。
+    统一写入主库（panel.db 的 agent_trace_logs 表）。
     哈希链：每个 session 独立链条。
+    旧版 legacy SQLite（runtime/sqlite/traces.db）与 JSONL（runtime/traces/*.jsonl）
+    双写已移除——主库已覆盖全部字段，双写只增加存储与权限问题。
     """
 
     def __init__(self, dbPath: str = "runtime/sqlite/traces.db",
                  jsonlDir: str = "runtime/traces"):
-        self._storage = TraceStorage(dbPath)
+        # 兼容旧签名：dbPath / jsonlDir 不再使用，trace 统一写入主库
         self._mainStorage = AgentTraceDaoOrm()
-        self._jsonlDir = jsonlDir
         self._chains: dict[str, HashChain] = {}
-        os.makedirs(jsonlDir, exist_ok=True)
 
     def record(self, traceId: str, sessionId: str,
                eventType: str, data: dict) -> str:
-        """记录一条审计事件。
+        """记录一条审计事件到主库 agent_trace_logs 表。
 
         Returns:
             本条记录的哈希值
@@ -49,23 +46,9 @@ class TraceRecorder:
             "data": data,
         })
 
-        # Main DB + legacy SQLite.
+        # 写入主库（agent_trace_logs 表）
         self._mainStorage.insert(traceId, sessionId, eventTypeValue,
                                  timestamp, data, entryHash, prevHash)
-        self._storage.insert(traceId, sessionId, eventTypeValue,
-                             timestamp, data, entryHash, prevHash)
-
-        # JSONL
-        entry = json.dumps({
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "trace_id": traceId, "session_id": sessionId,
-            "event": eventTypeValue, "data": data,
-            "entry_hash": entryHash, "prev_hash": prevHash,
-        }, ensure_ascii=False)
-        jsonlPath = os.path.join(self._jsonlDir,
-                                 datetime.utcnow().strftime("%Y-%m-%d") + ".jsonl")
-        with open(jsonlPath, "a", encoding="utf-8") as f:
-            f.write(entry + "\n")
 
         _logger.debug("trace %s %s %s", traceId[:8], eventTypeValue, entryHash)
         return entryHash
@@ -75,4 +58,4 @@ class TraceRecorder:
         return self._mainStorage.query(traceId=traceId, sessionId=sessionId, limit=limit)
 
     def close(self) -> None:
-        self._storage.close()
+        pass

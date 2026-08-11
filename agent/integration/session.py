@@ -9,12 +9,15 @@ S6 更新：AgentCore 替换 Worker 模式。
 """
 from __future__ import annotations
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from agent.shared.types import AgentConfig, AgentEvent, EventType
 from agent.shared.id_gen import gen_session_id, gen_trace_id
 from agent.config_envs.loader import loadConfig
 from agent.integration.event_stream import EventStream
 from agent.safety.rule_engine import RuleEngine
+from agent.safety.canary import CanaryManager
+from agent.safety.llm_classifier import InjectionClassifier
 from ndlmpanel_agent.mcp.server.registry import ToolRegistry
 from ndlmpanel_agent.mcp.server.dispatcher import McpDispatcher
 from agent.agent_core.prompt_builder import PromptBuilder
@@ -34,6 +37,22 @@ def _aliasedTool(func, name: str):
     wrapper.__doc__ = func.__doc__
     wrapper.__annotations__ = getattr(func, "__annotations__", {})
     return wrapper
+
+
+def _writeAgentAlert(level: int, message: str) -> None:
+    """写入 alert_events 告警表。
+
+    延迟 import gateway DAO：避免 agent 包模块加载时依赖 gateway，
+    仅在运行时（AgentSession 由 gateway 进程创建后）调用。
+    失败仅记 warning（不记录 message 原文，避免敏感内容进日志），
+    告警写入不得阻断 Agent 主流程。
+    """
+    try:
+        from gateway.dao.SystemInfoDao import SystemInfoDao
+        SystemInfoDao().createAlert(level, str(message)[:500])
+    except Exception:
+        logging.getLogger("ndlmpanel.agent_session").warning(
+            "alert_events 告警写入失败（level=%s），已忽略", level)
 
 
 class AgentSession:
@@ -60,8 +79,9 @@ class AgentSession:
 
         # 加载 Prompt 模板
         import os as _os
-        root = _os.path.dirname(_os.path.dirname(_os.path.dirname(
-            _os.path.dirname(_os.path.abspath(__file__)))))
+        # 项目根 = 3 层上级（agent/integration/session.py → agent → 项目根）
+        root = _os.path.dirname(_os.path.dirname(
+            _os.path.dirname(_os.path.abspath(__file__))))
 
         # ── Agent 工作区路径（优先从配置读取，兜底为项目根目录下的 workspace/）──
         configured = getattr(config, "workspace_dir", "") or ""
@@ -110,11 +130,24 @@ class AgentSession:
 
         # 核心组件
         safety = RuleEngine(config.safety_policy)
-        promptBuilder = PromptBuilder(sysPrompt, safetyRules)
+        canary = CanaryManager(enabled=config.canary_enabled)
+        promptBuilder = PromptBuilder(sysPrompt, safetyRules, canary=canary)
 
         # LLM Provider — 由工厂按 config.llm_provider 选择，
         # 无 api_key 时自动回退 MockProvider
         self._llm = createProvider(config)
+
+        # ── 注入防护：第三方 LLM 分类器（独立 provider，避免与主对话共享状态）──
+        injectionClassifier: InjectionClassifier | None = None
+        if config.injection_llm_mode != "off" and config.llm_api_key:
+            from agent.llm_providers.mock import MockProvider
+            clfProvider = createProvider(config)
+            if not isinstance(clfProvider, MockProvider):
+                injectionClassifier = InjectionClassifier(
+                    provider=clfProvider,
+                    mode=config.injection_llm_mode,
+                    samplingRate=config.injection_sampling_rate,
+                )
         # 注册全部工具 — 不再按模式过滤
         # （KV-Cache 优化：tools 参数始终一致 → 前缀缓存命中）
         # 模式门控下沉到 RuleEngine（后端硬规则）
@@ -134,6 +167,9 @@ class AgentSession:
             autoApproveScheduled=autoApproveScheduled,
             nonInteractiveApprovals=nonInteractiveApprovals,
             scheduledApprovalPolicy=scheduledApprovalPolicy,
+            injectionClassifier=injectionClassifier,
+            canary=canary,
+            alertSink=_writeAgentAlert,
         )
         self._core.setRecorder(self._recorder)
         self._runTask: "asyncio.Task | None" = None

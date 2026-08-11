@@ -29,6 +29,18 @@ def defaultStdioCwd() -> str:
     return str(Path(__file__).resolve().parents[2])
 
 
+def _resolvePythonCommand(command: list[str]) -> list[str]:
+    """把命令里的 python/python3 替换为当前解释器。
+
+    配置里写死的 "python" 依赖 PATH；生产机可能没有该命令，
+    或软链会破坏 venv 定位（找不到 pyvenv.cfg → 缺 site-packages）。
+    统一用 sys.executable（后端自身的 venv 解释器）保证依赖一致。
+    """
+    if command and command[0] in ("python", "python3", "python3.13"):
+        return [sys.executable] + command[1:]
+    return command
+
+
 class StdioMcpBridge:
     """Owns one stdio MCP child process and exposes registry/dispatcher views."""
 
@@ -51,6 +63,11 @@ class StdioMcpClient:
             raise ValueError("stdio MCP command cannot be empty")
         self._lock = threading.Lock()
         self._nextId = 1
+        # ── 用当前解释器运行 MCP 子进程 ──
+        # 命令里写死的 "python"/"python3" 依赖 PATH，生产机上 PATH 可能没有
+        # 或软链会破坏 venv 定位（pyvenv.cfg 找不到 → 缺 site-packages 依赖）。
+        # 替换为 sys.executable（后端自己的 venv 解释器）保证模块/依赖一致。
+        command = _resolvePythonCommand(command)
         self._proc = subprocess.Popen(
             command,
             cwd=cwd,
