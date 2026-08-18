@@ -25,6 +25,7 @@ class EventType(str, Enum):
     SAFETY_CHECKED = "safety.checked"
     APPROVAL_REQUIRED = "approval.required"
     APPROVAL_RESOLVED = "approval.resolved"
+    AUTHORIZATION_REQUESTED = "authorization.requested"
     PLAN_PROPOSED = "plan.proposed"
     PLAN_APPROVED = "plan.approved"
     PLAN_REJECTED = "plan.rejected"

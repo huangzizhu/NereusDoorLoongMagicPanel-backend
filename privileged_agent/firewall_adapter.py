@@ -30,7 +30,11 @@ class FirewallCommandResult:
     returncode: int
 
 
-def _run_command(command: list[str], check: bool = True) -> FirewallCommandResult:
+def _run_command(
+    command: list[str],
+    check: bool = True,
+    timeout: int = 5,
+) -> FirewallCommandResult:
     try:
         command_env = os.environ.copy()
         command_env["LC_ALL"] = "C"
@@ -42,12 +46,19 @@ def _run_command(command: list[str], check: bool = True) -> FirewallCommandResul
             text=True,
             check=False,
             env=command_env,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise PrivilegedAgentActionError(
             PrivilegedErrorCode.SERVICE_UNAVAILABLE,
             f"命令不存在: {command[0]}",
             str(exc),
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PrivilegedAgentActionError(
+            PrivilegedErrorCode.SERVICE_UNAVAILABLE,
+            "系统命令执行超时",
+            f"timeout={timeout}s command={' '.join(command)}",
         ) from exc
     except Exception as exc:
         raise PrivilegedAgentActionError(
@@ -421,7 +432,7 @@ def _read_journal_ssh_logs(max_lines: int = 500) -> list[str]:
         command = ["journalctl", "--no-pager", "-o", "short-iso", "-n", str(max_lines), "-r"]
         for service_name in service_names:
             command.extend(["-u", service_name])
-        result = _run_command(command, check=False)
+        result = _run_command(command, check=False, timeout=3)
         if result.returncode == 0 and result.stdout.strip():
             return [line for line in result.stdout.splitlines() if line.strip()]
     return []

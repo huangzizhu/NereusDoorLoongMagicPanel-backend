@@ -10,6 +10,7 @@ Agent 配置模块
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
+from agent.prompt_loader import loadPrompt
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -40,14 +41,9 @@ class ContextConfiguration(BaseModel):
 
     max_context_tokens: int = 62000
     session_ttl_seconds: int = 1800
-    default_system_prompt: str = (
-        "你是一个专业的 Linux 运维助手，名叫 NDLM。\n"
-        "你可以调用工具来查询和管理 Linux 系统。\n"
-        "规则：\n"
-        "1. 只执行用户明确要求的操作，不要主动执行破坏性命令\n"
-        "2. 对于高风险操作（如终止进程、删除文件），必须向用户确认后再执行\n"
-        "3. 每次回复要简洁，先说结论，再说细节\n"
-        "4. 如果工具执行失败，解释原因并提供替代方案"
+    default_system_prompt: str = loadPrompt(
+        "legacy/default_system.txt",
+        fallback="你是一个 Linux 运维助手。",
     )
 
 

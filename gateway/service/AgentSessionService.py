@@ -8,6 +8,7 @@ from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.AgentSessionDaoOrm import AgentSessionDaoOrm
 from pojo.Agent import (
     AgentMessageResponse,
+    AgentStatusItem,
     AgentSessionCreate,
     AgentSessionResponse,
     McpServerSpec,
@@ -62,6 +63,19 @@ class AgentSessionService(Singleton):
                 AgentSessionResponse.model_validate(row)
                 for row in rows
             ]
+            return ListResponse(total=total, items=items)
+        except Exception as exc:
+            raise DataBaseException(
+                innerMessage=str(exc),
+                userMessage="数据库操作错误，请重试或联系管理员",
+                cause=exc,
+            )
+
+    def listRecentStatuses(self, userId: int, limit: int = 5) -> ListResponse:
+        """返回当前用户可见的最近会话状态，不加载消息和 trace。"""
+        try:
+            total, rows = self.dao.listSessions(userId, 1, limit)
+            items = [AgentStatusItem.model_validate(row) for row in rows]
             return ListResponse(total=total, items=items)
         except Exception as exc:
             raise DataBaseException(

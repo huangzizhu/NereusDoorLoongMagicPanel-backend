@@ -216,6 +216,7 @@ class ElevationService(Singleton):
         request_type: str = "privileged",
         task_id: int | None = None,
         approval_policy: dict[str, Any] | None = None,
+        expire_previous: bool = True,
     ) -> ElevationCodeEntry:
         """生成一个新的特权码。
 
@@ -255,9 +256,16 @@ class ElevationService(Singleton):
             approval_policy=approval_policy,
         )
         with self._lock:
-            # 如果该 session 已有 pending code，标记为过期
+            # 如果该 session 已有 pending code，标记为过期（特权通道语义：
+            # 同一 session 同时只保留一个待审批 code）。
+            # expire_previous=False（工具授权请求）时保留旧码，
+            # 同一轮巡检可能产生多个待审批授权请求。
             old_code = self._sessions.get(session_id)
-            if old_code and old_code in self._codes:
+            if (
+                expire_previous
+                and old_code
+                and old_code in self._codes
+            ):
                 old_entry = self._codes[old_code]
                 if old_entry.status == STATUS_PENDING:
                     old_entry.status = STATUS_EXPIRED

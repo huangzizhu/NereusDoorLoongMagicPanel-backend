@@ -246,3 +246,18 @@ class ScheduledTaskDaoOrm(Singleton):
             return result
         finally:
             session.close()
+
+    def findRunBySessionId(self, sessionId: str) -> SimpleNamespace | None:
+        """按执行会话反查定时任务执行记录（授权写回用）。"""
+        session = self.SessionLocal()
+        try:
+            row = session.query(ScheduledTaskRunOrm).filter(
+                ScheduledTaskRunOrm.sessionId == sessionId
+            ).order_by(ScheduledTaskRunOrm.startedAt.desc()).first()
+            if row is None:
+                return None
+            result = self._runToObj(row)
+            session.expunge(row)
+            return result
+        finally:
+            session.close()

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import socket
 import uuid
@@ -9,6 +10,9 @@ from privileged_agent.models import (
     PrivilegedRequestContext,
     PrivilegedResponse,
 )
+
+
+_logger = logging.getLogger("privileged_agent_client")
 
 
 class PrivilegedAgentRemoteError(Exception):
@@ -26,6 +30,16 @@ class PrivilegedAgentClient:
             "/run/ndlmpanel/privileged-agent.sock",
         )
         self.timeout_seconds = float(os.getenv("NDLM_PRIVILEGED_AGENT_TIMEOUT_SECONDS", "5"))
+
+    def _log_transport_error(self, action: str, code: str, details: str | None = None):
+        """记录 socket 层故障，响应仍由上层转换为业务错误。"""
+        _logger.warning(
+            "privileged agent unavailable action=%s code=%s socket=%s details=%s",
+            action,
+            code,
+            self.socket_path,
+            details or "",
+        )
 
     def defaultContext(self, source: str) -> PrivilegedRequestContext:
         return PrivilegedRequestContext(source=source)
@@ -54,20 +68,26 @@ class PrivilegedAgentClient:
                         break
                     raw += chunk
         except FileNotFoundError as exc:
+            self._log_transport_error(request.action, "PROXY_UNAVAILABLE", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_UNAVAILABLE", "特权代理未启动", str(exc)) from exc
         except PermissionError as exc:
+            self._log_transport_error(request.action, "PROXY_PERMISSION_DENIED", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_PERMISSION_DENIED", "无权访问特权代理", str(exc)) from exc
         except socket.timeout as exc:
+            self._log_transport_error(request.action, "PROXY_TIMEOUT", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_TIMEOUT", "特权代理响应超时", str(exc)) from exc
         except OSError as exc:
+            self._log_transport_error(request.action, "PROXY_UNAVAILABLE", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_UNAVAILABLE", "无法连接特权代理", str(exc)) from exc
 
         if not raw:
+            self._log_transport_error(request.action, "PROXY_PROTOCOL_ERROR", "empty response")
             raise PrivilegedAgentRemoteError("PROXY_PROTOCOL_ERROR", "特权代理返回空响应")
 
         try:
             response = PrivilegedResponse.model_validate_json(raw.decode("utf-8"))
         except Exception as exc:
+            self._log_transport_error(request.action, "PROXY_PROTOCOL_ERROR", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_PROTOCOL_ERROR", "特权代理响应格式非法", str(exc)) from exc
 
         if not response.success:
@@ -113,20 +133,26 @@ class PrivilegedAgentClient:
                         break
                     raw += chunk
         except FileNotFoundError as exc:
+            self._log_transport_error(str(signed_request.get("command", "")), "PROXY_UNAVAILABLE", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_UNAVAILABLE", "特权代理未启动", str(exc)) from exc
         except PermissionError as exc:
+            self._log_transport_error(str(signed_request.get("command", "")), "PROXY_PERMISSION_DENIED", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_PERMISSION_DENIED", "无权访问特权代理", str(exc)) from exc
         except socket.timeout as exc:
+            self._log_transport_error(str(signed_request.get("command", "")), "PROXY_TIMEOUT", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_TIMEOUT", "特权代理响应超时", str(exc)) from exc
         except OSError as exc:
+            self._log_transport_error(str(signed_request.get("command", "")), "PROXY_UNAVAILABLE", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_UNAVAILABLE", "无法连接特权代理", str(exc)) from exc
 
         if not raw:
+            self._log_transport_error(str(signed_request.get("command", "")), "PROXY_PROTOCOL_ERROR", "empty response")
             raise PrivilegedAgentRemoteError("PROXY_PROTOCOL_ERROR", "特权代理返回空响应")
 
         try:
             response = PrivilegedResponse.model_validate_json(raw.decode("utf-8"))
         except Exception as exc:
+            self._log_transport_error(str(signed_request.get("command", "")), "PROXY_PROTOCOL_ERROR", str(exc))
             raise PrivilegedAgentRemoteError("PROXY_PROTOCOL_ERROR", "特权代理响应格式非法", str(exc)) from exc
 
         if not response.success:

@@ -13,7 +13,7 @@ from utils.toolFunction.tools.ops._command_runner import runCommand
 
 def checkDockerInstalled() -> DockerInstallInfo:
     try:
-        result = runCommand(["docker", "--version"])
+        result = runCommand(["docker", "--version"], timeout=5)
         versionStr = result.stdout.strip().split(",")[0].replace("Docker version ", "")
         return DockerInstallInfo(isInstalled=True, version=versionStr)
     except ToolExecutionException:
@@ -50,7 +50,7 @@ def getDockerContainers(
     if includeStoppedContainers:
         cmd.insert(2, "-a")
 
-    result = runCommand(cmd)
+    result = runCommand(cmd, timeout=5)
 
     containers: list[DockerContainer] = []
     for line in result.stdout.strip().splitlines():
@@ -68,31 +68,69 @@ def getDockerContainers(
             ports=data.get("Ports", ""),
         )
 
-        # 对运行中的容器尝试获取资源占用
-        if "Up" in container.status:
-            try:
-                statsResult = runCommand(
-                    [
-                        "docker",
-                        "stats",
-                        "--no-stream",
-                        "--format",
-                        "{{.CPUPerc}},{{.MemUsage}}",
-                        container.containerId,
-                    ],
-                    timeout=10,
-                )
-                parts = statsResult.stdout.strip().split(",")
-                if len(parts) >= 2:
-                    container.cpuPercent = float(parts[0].strip().rstrip("%"))
-                    memParts = parts[1].strip().split("/")
-                    container.memoryUsageMB = _parseMemoryValue(memParts[0])
-                    if len(memParts) > 1:
-                        container.memoryLimitMB = _parseMemoryValue(memParts[1])
-            except (ToolExecutionException, ValueError, IndexError):
-                pass
-
         containers.append(container)
+
+    # `docker stats <id>` is slow when called once per container. Query the
+    # daemon once so the list endpoint stays within the frontend request
+    # timeout even when several containers are running.
+    runningContainers = [item for item in containers if "Up" in item.status]
+    if runningContainers:
+        try:
+            statsResult = runCommand(
+                [
+                    "docker",
+                    "stats",
+                    "--no-stream",
+                    "--no-trunc",
+                    "--format",
+                    "{{json .}}",
+                ],
+                timeout=3,
+                checkReturnCode=False,
+            )
+            statsById: dict[str, dict] = {}
+            for line in statsResult.stdout.strip().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                containerId = str(data.get("Container") or data.get("ID") or "")
+                if containerId:
+                    statsById[containerId] = data
+
+            for container in runningContainers:
+                stats = statsById.get(container.containerId)
+                if stats is None:
+                    # Docker may return a short ID depending on the daemon
+                    # version, so fall back to prefix matching.
+                    stats = next(
+                        (
+                            value
+                            for key, value in statsById.items()
+                            if key.startswith(container.containerId[:12])
+                            or container.containerId.startswith(key)
+                        ),
+                        None,
+                    )
+                if stats is None:
+                    continue
+                try:
+                    container.cpuPercent = float(
+                        str(stats.get("CPUPerc", "0")).strip().rstrip("%")
+                    )
+                    memParts = str(stats.get("MemUsage", "")).split("/")
+                    if memParts and memParts[0].strip():
+                        container.memoryUsageMB = _parseMemoryValue(memParts[0])
+                    if len(memParts) > 1 and memParts[1].strip():
+                        container.memoryLimitMB = _parseMemoryValue(memParts[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+        except ToolExecutionException:
+            # The container list is still useful without an optional stats
+            # sample; leave resource fields as null instead of failing all.
+            pass
 
     return containers
 # ── 连接本地 Docker 服务（未实现） ──
@@ -476,8 +514,6 @@ def deleteDockerContainer(containerId):
     runCommand(["docker", "rm", containerId], timeout=30)
 # 获取所有容器列表（运行中+已停止）
 def getDockerContainerList():
-    if not checkDockerInstalled().isInstalled:
-        raise ServiceUnavailableException("Docker 未安装")
     return getDockerContainers(includeStoppedContainers=True)
 # 获取容器实时日志
 def getDockerContainerLogs(containerId , tailLines: int = 200):

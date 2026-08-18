@@ -4,6 +4,7 @@ from datetime import datetime
 
 from Exception.DataBaseException import DataBaseException
 from Exception.InvalidParamException import InvalidParamException
+from agent.prompt_loader import loadPrompt
 from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.ScheduledTaskDaoOrm import ScheduledTaskDaoOrm
 from pojo.Common import ListResponse
@@ -12,6 +13,12 @@ from pojo.ScheduledTask import (
     ScheduledTaskResponse,
     ScheduledTaskRunResponse,
     ScheduledTaskUpdate,
+)
+
+
+# 无人值守机制提示词：注入定时任务 agent，约束其行为（管理员不在线）。
+UNATTENDED_TASK_GUIDANCE: str = loadPrompt(
+    "automation/scheduled_task_guidance.txt"
 )
 
 
@@ -134,6 +141,10 @@ class ScheduledTaskService(Singleton):
                 title=f"定时任务: {task.name}",
                 message=task.taskDescription,
                 scheduledApprovalPolicy=task.approvalPolicy,
+                includeCoreTools=True,
+                source="scheduled",
+                autoRunTaskId=task.id,
+                autoRunGuidance=UNATTENDED_TASK_GUIDANCE,
             )
             self.dao.finishRun(
                 run.id,

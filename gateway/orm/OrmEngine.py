@@ -20,6 +20,7 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "agent_sessions": [
         ("mcpServers", "mcpServers TEXT"),
         ("pendingChoice", "pendingChoice TEXT"),
+        ("source", "source VARCHAR(32) DEFAULT 'manual'"),
     ],
     "scheduled_tasks": [
         ("approvalPolicy", "approvalPolicy TEXT"),

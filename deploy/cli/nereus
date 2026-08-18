@@ -261,7 +261,10 @@ def cmd_approve(code: str):
 
     # 2. 显示待审批信息
     print("\n" + "=" * 60)
-    title = "定时任务预授权批准" if request_type == "scheduled_task_policy" else "特权请求批准"
+    title = {
+        "scheduled_task_policy": "定时任务预授权批准",
+        "tool_authorization": "工具授权请求批准",
+    }.get(request_type, "特权请求批准")
     print(f"🔐  {title}")
     print("=" * 60)
     print(f"  Session:  {data.get('session_id', '?')}")
@@ -271,7 +274,19 @@ def cmd_approve(code: str):
     print(f"  请求者:   AI Agent")
 
     # 通道提示
-    if request_type == "scheduled_task_policy":
+    if request_type == "tool_authorization":
+        authz = api_get(f"/authorization/{code}")
+        authz_data = authz.get("data", {}) if _is_success(authz) else {}
+        print("\n  ── 🛠 工具授权请求 ──")
+        print(f"  工具:     {authz_data.get('toolName', '?')}")
+        if authz_data.get("commandLine"):
+            print(f"  命令:     {authz_data.get('commandLine')}")
+        authz_paths = authz_data.get("paths") or []
+        if authz_paths:
+            print(f"  涉及路径: {', '.join(str(x) for x in authz_paths)}")
+        if authz_data.get("policyReason"):
+            print(f"  匹配结果: {authz_data.get('policyReason')}")
+    elif request_type == "scheduled_task_policy":
         allowed_tools = approval_policy.get("allowedTools") or []
         allowed_paths = approval_policy.get("allowedPaths") or []
         denied_paths = approval_policy.get("deniedPaths") or []
@@ -301,6 +316,20 @@ def cmd_approve(code: str):
     print(f"  有效期: {ttl // 60} 分钟  |  操作次数上限: {max_ops} 次")
     print()
 
+    # 工具授权请求：允许管理员放宽路径前缀（写回策略用前缀匹配，
+    # 覆盖任务每次生成不同目录名的场景，如 /tmp/ndlm_test）
+    path_prefix = None
+    if request_type == "tool_authorization" and authz_paths:
+        try:
+            path_prefix = input(
+                "  允许路径前缀（回车=仅以上路径，可输 /tmp/ndlm_test 放行其全部子路径）: "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            path_prefix = ""
+        if path_prefix:
+            print(f"  → 将以路径前缀写回白名单: {path_prefix}")
+            print()
+
     # 3. AI 安全审计（对所有高风险操作执行）
     #    多命令 / 双通道 / 脚本 都触发审计
     if request_type == "scheduled_task_policy" or has_multiple or inline_cmd or script_path:
@@ -323,6 +352,8 @@ def cmd_approve(code: str):
         print("  请仔细阅读以上 AI 审计报告。")
         if request_type == "scheduled_task_policy":
             print("  你即将批准后台定时任务在无人值守时自动执行匹配操作。")
+        elif request_type == "tool_authorization":
+            print("  你即将批准该工具授权请求，后续运行将自动放行匹配操作。")
         else:
             print("  你即将批准的操作具有 root 权限。")
         print()
@@ -340,7 +371,10 @@ def cmd_approve(code: str):
         return
 
     # 5. 提交批准
-    result = api_post("/approve", {"code": code, "approved_by": "admin"})
+    approve_body = {"code": code, "approved_by": "admin"}
+    if path_prefix:
+        approve_body["path_prefix"] = path_prefix
+    result = api_post("/approve", approve_body)
     if not _is_success(result):
         die(result.get("message", "批准失败"))
 

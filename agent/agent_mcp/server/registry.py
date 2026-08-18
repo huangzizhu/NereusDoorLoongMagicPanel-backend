@@ -14,6 +14,10 @@ class AgentToolRegistry:
     def register(self, tool: AgentAdaptedTool) -> None:
         self._tools[tool.name] = tool
 
+    def unregister(self, name: str) -> bool:
+        """按名称移除已注册工具（无人值守模式剔除交互类工具）。"""
+        return self._tools.pop(name, None) is not None
+
     def listTools(self) -> list[dict]:
         schemas = [tool.toMcpSchema() for tool in self._tools.values()]
         schemas.sort(key=lambda item: item["name"])

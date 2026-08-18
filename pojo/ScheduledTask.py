@@ -6,10 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ScheduledTaskApprovalPolicy(BaseModel):
     allowedTools: list[str] = Field(default_factory=list)
+    # 命令前缀白名单：runCommand / runShellCommand 必须命中；空列表 = 拒绝一切命令
+    allowedCommands: list[str] = Field(default_factory=list)
     allowedPaths: list[str] = Field(default_factory=list)
     deniedPaths: list[str] = Field(default_factory=list)
     allowedPrivilegedCommands: list[str] = Field(default_factory=list)
-    ttlSeconds: int = Field(3600, ge=60, le=30 * 24 * 3600)
+    # 无人值守场景默认 7 小时（管理员可能 24h 后才登录审批）
+    ttlSeconds: int = Field(25200, ge=60, le=30 * 24 * 3600)
     maxRuns: int = Field(100, ge=1, le=100000)
 
 
@@ -62,7 +65,8 @@ class ScheduledTaskRunResponse(BaseModel):
 
 
 class InspectionConfigUpdate(BaseModel):
-    intervalMinutes: int = Field(..., ge=1, le=1440)
+    intervalMinutes: Optional[int] = Field(None, ge=1, le=1440)
+    approvalPolicy: Optional[ScheduledTaskApprovalPolicy] = None
 
 
 class InspectionReportResponse(BaseModel):

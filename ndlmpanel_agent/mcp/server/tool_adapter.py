@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +22,20 @@ from ..protocol.schemas import functionToMcpToolSchema
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+# 特权脚本目录是协议的一部分：提示词、MCP 工具和特权代理必须使用同一个
+# 根路径，避免某个旧入口把脚本落到工作区或 /tmp 后再以 root 执行。
+PRIVILEGED_SCRIPT_DIR = Path("/opt/ndlmpanel/tmp_scripts")
+_SHELL_CONTROL_RE = re.compile(r"[;&|`$()\n\r]")
+
+
+def _isUnderDirectory(path: str, directory: Path) -> bool:
+    try:
+        Path(path).expanduser().resolve().relative_to(directory.resolve())
+        return True
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 from gateway.service.PrivilegedAgentClient import (  # noqa: E402
@@ -97,6 +112,10 @@ MCP_ONLY_TOOL_NAMES: tuple[str, ...] = (
     # V2 特权提权工具
     "submitElevation",
     "runPrivileged",
+    # 运维经验包（阶段 8）
+    "searchOpsExperience",
+    "getOpsExperienceDetail",
+    "submitOpsExperience",
 )
 
 
@@ -150,15 +169,21 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "addFirewallPortPrivileged": "Add an allow firewall port rule through the privileged agent.",
     "removeFirewallPortPrivileged": "Remove an allow firewall port rule through the privileged agent.",
     "manageSystemServicePrivileged": "Inspect or change an allowed systemd service through the privileged agent for non-status actions.",
-    "writePrivilegedFile": "Write a file to a privileged path (whitelist protected: nginx/var/www/docker etc.). Requires reason for approval.",
+    "writePrivilegedFile": "Write a file to a privileged path (whitelist protected: nginx/var/www/docker etc.). Requires reason for approval. If the file is a script that will later run with root, targetPath MUST be under /opt/ndlmpanel/tmp_scripts/; never use the workspace or /tmp.",
     "nginxWriteStaticFile": "Write a static file (html/css/js) to Nginx webroot (/etc/nginx/html/ or /var/www/). Requires reason for approval.",
-    "submitElevation": "Submit a privilege elevation request. Generates a one-time approval code that the admin must approve via 'sudo nereus approve <CODE>'. Supports three mutually exclusive channels: (A) commands=[] for preset/registered commands, (B) inline_cmd='...' for arbitrary shell one-liner, (C) script_path='/opt/ndlmpanel/tmp_scripts/xxx.sh' for pre-written scripts. Priority: inline_cmd > script_path > commands. After admin approves, use runPrivileged() to execute.",
-    "runPrivileged": "Execute a privileged command using an approved elevation token. Must call after the admin approved the elevation code.",
+    "submitElevation": "Submit a privilege elevation request. Generates a one-time approval code that the admin must approve via 'sudo nereus approve <CODE>'. Three mutually exclusive channels: (A) commands=[] ONLY for exactly one simple preset command, (B) inline_cmd='...' ONLY for exactly one simple shell command, (C) script_path='/opt/ndlmpanel/tmp_scripts/xxx.sh' for any two-or-more related privileged actions or multi-step logic. For multiple related actions, first write ONE auditable script with writePrivilegedFile, then call submitElevation ONCE with script_path; do not submit one command at a time or use a commands array as a substitute. After approval, use runPrivileged().",
+    "runPrivileged": "Execute a privileged command using an approved elevation token. Call only after a real admin approval event provides token_id; use the exact approved command_index, args, and session_id, without modifying them.",
+    "searchOpsExperience": "按症状/关键词检索组织运维经验库（启用中的经验包），返回标题+分类+标签+摘要+质量分，供诊断参考。遇到疑似已知问题（如 Nginx 502、证书过期、磁盘告警）时优先检索。默认排除 negative 教训包。",
+    "getOpsExperienceDetail": "取单个运维经验包完整内容（deploymentDoc 正文 + stages 阶段 + pitfalls 坑 + earlyWarnings 预警特征 + 附件路径），供处置方案参考。附件为只读参考，执行需走审批流程。",
+    "submitOpsExperience": "处置成功后主动沉淀运维经验包（source=ai）。将本次处置写成 Markdown 正文（现象/原因/步骤/验证），并按需提供 stages/pitfalls/earlyWarnings 结构化字段，反哺组织记忆。",
 }
 
 TOOL_ANNOTATIONS: dict[str, dict[str, Any]] = {
     "submitElevation": {"requiresPrivilege": True, "usesElevationFlow": True},
     "runPrivileged": {"requiresPrivilege": True, "usesElevationFlow": True, "usesPrivilegedAgent": True},
+    "searchOpsExperience": {"agentOptimized": True, "readsOrganizationMemory": True},
+    "getOpsExperienceDetail": {"agentOptimized": True, "readsOrganizationMemory": True},
+    "submitOpsExperience": {"writesOrganizationMemory": True},
     "listProcesses": {"mayReturnLargeOutput": True, "preferredAlternative": "listProcessesBrief"},
     "getZombieOrphanProcesses": {"preferredAlternative": "getProcessAnomalies"},
     "getDockerContainerInfo": {
@@ -454,7 +479,7 @@ def writePrivilegedFile(
     content: str,
     reason: str = "",
 ) -> dict:
-    """向特权路径写入文件（仅限受白名单保护的路径）。
+    """向特权路径写入文件；多步特权操作的脚本必须写入 /opt/ndlmpanel/tmp_scripts/。
 
     适用于：
     - 向 /etc/nginx/ 写入站点配置
@@ -468,6 +493,24 @@ def writePrivilegedFile(
         content: 文件内容
         reason: 调用原因说明（供审批展示）
     """
+    # 只要内容看起来是将来会被 root 执行的脚本，就强制使用统一目录。
+    # 这是工具入口的快速失败；特权代理和命令注册表仍会再次校验。
+    looksLikeScript = (
+        Path(targetPath).suffix.lower() in {".sh", ".bash"}
+        or content.lstrip().startswith("#!")
+    )
+    if looksLikeScript and not _isUnderDirectory(
+        targetPath, PRIVILEGED_SCRIPT_DIR
+    ):
+        return _errorPayload(
+            errorCode="PRIVILEGED_SCRIPT_PATH_INVALID",
+            errorMessage=(
+                "需要特权执行的脚本只能写入 "
+                f"{PRIVILEGED_SCRIPT_DIR}/，禁止工作区和 /tmp"
+            ),
+            requiresPrivilege=True,
+            backend="mcp.guard",
+        )
     try:
         result = _callPrivileged(
             PrivilegedAction.FILE_WRITE_TO_ALLOWED,
@@ -547,6 +590,8 @@ def _mcpOnlyRiskLevel(name: str) -> ToolRiskLevel:
         return ToolRiskLevel.WRITE
     if name in {"submitElevation", "runPrivileged"}:
         return ToolRiskLevel.DANGEROUS
+    if name == "submitOpsExperience":
+        return ToolRiskLevel.WRITE  # 沉淀经验包属写操作，registry 自动强制 reason，天然可审计
     return ToolRiskLevel.READ_ONLY
 
 
@@ -584,29 +629,31 @@ def submitElevation(
     script_path: str = "",
     session_id: str = "",
 ) -> dict:
-    """提交特权提权申请。生成一个一次性审批码，管理员需在 SSH 中执行
+    """提交特权提权申请；同一目标的多个相关动作应合并为一个脚本并一次申请。
+    生成一个一次性审批码，管理员需在 SSH 中执行
     `sudo nereus approve <CODE>` 批准。批准后使用 runPrivileged() 执行。
 
-    支持三种互斥的提权通道（按优先级 inline_cmd > script_path > commands）:
+    支持三种互斥的提权通道；多个通道同时传入会直接拒绝，不做隐式优先级覆盖：
 
     选择决策:
-    ├─ 操作是已注册的稳定命令（mkdir/chown/cp/rm等）→ 通道A
-    ├─ 操作是一次性 shell 命令（管道/变量/重定向） → 通道B
-    └─ 操作复杂需多步逻辑/条件/循环 → 先写脚本到 /opt/ndlmpanel/tmp_scripts/, 再通道C
+    ├─ 恰好一个已注册的稳定命令 → 通道A
+    ├─ 恰好一个简单的一次性 shell 命令 → 通道B
+    └─ 两个或以上相关动作，或多步逻辑/条件/循环 → 先写脚本到 /opt/ndlmpanel/tmp_scripts/, 再通道C
 
     **通道 A — 预设命令（commands）**:
     高频稳定操作，使用注册命令列表:
     submitElevation(commands=[{"command": "mkdir", "args": ["-p", "/var/www/app"]}])
 
-    **通道 B — 自由命令（inline_cmd）**:
-    一次性任意 shell 命令，支持管道、变量、重定向:
+    **通道 B — 简单命令（inline_cmd）**:
+    恰好一个不含 shell 控制符的一次性命令：
     submitElevation(inline_cmd="tar -czf /var/www/backup.tar.gz /var/www/html")
 
     **通道 C — 自由脚本（script_path）**:
     复杂多步操作，先用 writePrivilegedFile 写脚本到 /opt/ndlmpanel/tmp_scripts/, 再提交:
     submitElevation(script_path="/opt/ndlmpanel/tmp_scripts/migrate_logs.sh")
 
-    ⚠ 三通道互斥：不要同时传 commands 和 inline_cmd，inline_cmd 优先。
+    ⚠ 三通道互斥：不要同时传 commands、inline_cmd、script_path。
+    ⚠ commands 只能包含一个命令；两个或以上相关动作必须先写脚本。
     ⚠ inline_cmd 和 script_path 会触发 AI 安全审计（管理员可见完整命令/脚本）。
     ⚠ MCP 子进程不存储任何状态。code 由工具生成后返回，
       由 Gateway 进程的 _handleElevationResult 同步到 ElevationService。
@@ -623,6 +670,53 @@ def submitElevation(
         {"code": "NGA7-K3X9", "status": "pending", "commands": [...], ...}
     """
     import secrets as _secrets
+
+    selectedChannels = sum(
+        bool(value)
+        for value in (commands, inline_cmd.strip(), script_path.strip())
+    )
+    if selectedChannels > 1:
+        return _errorPayload(
+            errorCode="ELEVATION_CHANNEL_CONFLICT",
+            errorMessage=(
+                "commands、inline_cmd、script_path 三种提权通道互斥，"
+                "请只选择一种"
+            ),
+            requiresPrivilege=True,
+            backend="mcp.guard",
+        )
+    if commands and len(commands) != 1:
+        return _errorPayload(
+            errorCode="MULTI_ACTION_REQUIRES_SCRIPT",
+            errorMessage=(
+                "多个特权动作必须合并为一个可审计脚本，写入 "
+                f"{PRIVILEGED_SCRIPT_DIR}/ 后一次申请"
+            ),
+            requiresPrivilege=True,
+            backend="mcp.guard",
+        )
+    if script_path and not _isUnderDirectory(
+        script_path, PRIVILEGED_SCRIPT_DIR
+    ):
+        return _errorPayload(
+            errorCode="PRIVILEGED_SCRIPT_PATH_INVALID",
+            errorMessage=(
+                "script_path 必须位于 "
+                f"{PRIVILEGED_SCRIPT_DIR}/ 下，禁止工作区和 /tmp"
+            ),
+            requiresPrivilege=True,
+            backend="mcp.guard",
+        )
+    if inline_cmd and _SHELL_CONTROL_RE.search(inline_cmd):
+        return _errorPayload(
+            errorCode="INLINE_COMMAND_NOT_SIMPLE",
+            errorMessage=(
+                "inline_cmd 仅允许一个简单命令；多步逻辑、管道、"
+                "重定向或条件处理必须改用特权脚本"
+            ),
+            requiresPrivilege=True,
+            backend="mcp.guard",
+        )
     _chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     _code = "".join(_secrets.choice(_chars) for _ in range(4)) + "-" + "".join(_secrets.choice(_chars) for _ in range(4))
 
@@ -723,6 +817,125 @@ def runPrivileged(
                 backend="privileged_agent",
             )
         ) from exc
+
+
+# ════════════════════════════════════════════════════════════
+#  运维经验包工具（阶段 8）— OpsExperienceService 共用业务层
+# ════════════════════════════════════════════════════════════
+
+
+def searchOpsExperience(
+    query: str,
+    category: str | None = None,
+    limit: int = 10,
+) -> dict:
+    """按症状/关键词检索组织运维经验库（启用中的经验包）。
+
+    返回标题+分类+标签+摘要+质量分，供诊断参考。默认排除 negative 教训包；
+    显式传 category="negative" 时返回教训包（带 negativeOf 提示，二期做方案相似度匹配）。
+    命中即计入 hitCount 反馈统计。
+
+    Args:
+        query: 症状/关键词，如 "nginx 502"、"证书过期"、"磁盘告警"
+        category: 可选过滤 deployment|fault|optimization|security|negative
+        limit: 返回条数上限（默认 10，最大 50）
+
+    Returns:
+        {"success": True, "data": [{"id", "title", "category", "osType", "tags",
+                                    "riskLevel", "qualityScore", "hitCount", "summary"}, ...]}
+    """
+    from gateway.service.OpsExperienceService import OpsExperienceService
+
+    svc = OpsExperienceService()
+    try:
+        items = svc.searchPacks(query=query, category=category, limit=limit)
+        return {"success": True, "data": items}
+    except Exception as exc:
+        return _errorPayload(
+            errorCode=exc.__class__.__name__,
+            errorMessage=str(exc),
+        )
+
+
+def getOpsExperienceDetail(packId: int) -> dict:
+    """取单个运维经验包完整内容，供处置方案参考。
+
+    返回 deploymentDoc 正文 + stages 阶段 + pitfalls 坑 + earlyWarnings 预警特征
+    + 附件清单（含绝对路径，可 readTextFile 只读参考；执行附件需走审批流程）。
+
+    Args:
+        packId: 经验包 id（来自 searchOpsExperience 返回）
+
+    Returns:
+        {"success": True, "data": {完整经验包}}
+    """
+    from gateway.service.OpsExperienceService import OpsExperienceService
+
+    svc = OpsExperienceService()
+    try:
+        return {"success": True, "data": svc.getPackDetail(packId)}
+    except Exception as exc:
+        return _errorPayload(
+            errorCode=exc.__class__.__name__,
+            errorMessage=str(exc),
+        )
+
+
+def submitOpsExperience(
+    title: str,
+    category: str,
+    deploymentDoc: str,
+    tags: list[str] | None = None,
+    stages: list[dict] | None = None,
+    pitfalls: list[dict] | None = None,
+    earlyWarnings: list[dict] | None = None,
+    riskLevel: str = "medium",
+    session_id: str = "",
+    reason: str = "",
+) -> dict:
+    """处置成功后主动沉淀运维经验包（source=ai），反哺组织记忆。
+
+    将本次处置写成 Markdown 正文（现象/原因/处置步骤/验证），并按需提供
+    结构化字段：stages（阶段）、pitfalls（坑）、earlyWarnings（预警特征）。
+    写入 source=ai，sourceSessionId 记录当前会话（可溯源审计）。
+    WRITE 风险：registry 自动强制 reason 参数。
+
+    Args:
+        title: 标题（一句话），如 "Nginx SSL 证书过期导致 502"
+        category: deployment|fault|optimization|security|negative
+        deploymentDoc: 正文 Markdown（部署/处置完整说明，主体）
+        tags: 标签，如 ["nginx", "ssl", "证书"]
+        stages: [{"name", "goal", "steps", "verify", "pitfallsRef"}]
+        pitfalls: [{"phenomenon", "cause", "solution", "stageRef"}]
+        earlyWarnings: [{"metric", "condition", "threshold", "severity", "hint"}]
+        riskLevel: low|medium|high（默认 medium；高危方案命中时提示人工复核）
+        session_id: 当前 Agent 会话 id（溯源审计）
+        reason: 沉淀经验包的原因（由 Agent 安全层注入并记录；不写入正文）
+
+    Returns:
+        {"success": True, "data": {创建的经验包}}
+    """
+    from gateway.service.OpsExperienceService import OpsExperienceService
+
+    svc = OpsExperienceService()
+    try:
+        payload = {
+            "title": title,
+            "category": category,
+            "deploymentDoc": deploymentDoc,
+            "tags": tags or [],
+            "stages": stages or [],
+            "pitfalls": pitfalls or [],
+            "earlyWarnings": earlyWarnings or [],
+            "riskLevel": riskLevel,
+        }
+        pack = svc.submitPack(payload, sourceSessionId=session_id or None)
+        return {"success": True, "data": pack}
+    except Exception as exc:
+        return _errorPayload(
+            errorCode=exc.__class__.__name__,
+            errorMessage=str(exc),
+        )
 
 
 def _callPrivileged(action: PrivilegedAction, payload: dict[str, Any]) -> Any:

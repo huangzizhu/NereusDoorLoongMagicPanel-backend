@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from agent.agent_core.agent_loop import AgentCore
+from agent.agent_router.router import AgentMode
 
 
 def _core(policy: dict) -> AgentCore:
     core = object.__new__(AgentCore)
     core._scheduledApprovalPolicy = policy
+    core._autoRunTaskId = None
+    core._autoRunSource = ""
+    core._autoRunGuidance = ""
+    core._mode = AgentMode.AGENT
     return core
 
 

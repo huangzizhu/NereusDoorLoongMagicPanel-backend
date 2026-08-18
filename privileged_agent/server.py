@@ -478,15 +478,27 @@ class PrivilegedAgentServer:
     #  V1: 安全的命令执行（SAFE_ENV）
     # ════════════════════════════════════════════════════════════
 
-    def _run_command(self, command: list[str]) -> subprocess.CompletedProcess:
+    def _run_command(
+        self,
+        command: list[str],
+        timeout: int = 10,
+    ) -> subprocess.CompletedProcess:
         """使用最小化安全环境执行命令，禁止继承父进程环境变量。"""
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=SAFE_ENV,  # 不继承父进程环境
-        )
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+                env=SAFE_ENV,  # 不继承父进程环境
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise PrivilegedAgentActionError(
+                PrivilegedErrorCode.SERVICE_UNAVAILABLE,
+                "系统命令执行超时",
+                f"timeout={timeout}s command={' '.join(command)}",
+            ) from exc
         if result.returncode != 0:
             details = (result.stderr or result.stdout or "").strip()
             raise PrivilegedAgentActionError(
@@ -557,7 +569,7 @@ class PrivilegedAgentServer:
 
     # ── MySQL 辅助 ──
     def _mysql_exec(self, sql: str) -> subprocess.CompletedProcess:
-        return self._run_command(["mysql", "-e", sql])
+        return self._run_command(["mysql", "-e", sql], timeout=4)
 
     # ════════════════════════════════════════════════════════════
     #  V1: 原有 dispatch（向后兼容）
@@ -832,7 +844,8 @@ class PrivilegedAgentServer:
             timeout_sec = int(payload.get("timeout", 60))
             if not self._rate_limiter.check(action):
                 raise PrivilegedAgentActionError(PrivilegedErrorCode.PERMISSION_DENIED, "操作过于频繁，请稍后再试", f"action={action}")
-            allowed_script_dirs = ["/opt/ndlmpanel/scripts/"]
+            # 统一新旧入口的脚本目录，禁止旧版 /opt/ndlmpanel/scripts/。
+            allowed_script_dirs = ["/opt/ndlmpanel/tmp_scripts/"]
             script = Path(script_path).resolve()
             allowed = False
             for script_dir in allowed_script_dirs:

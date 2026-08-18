@@ -6,43 +6,24 @@
 
 import json
 import logging
-import os
 import urllib.error
 import urllib.request
 
 from typing import Any
 
+from agent.llm_structured import (
+    MAX_STRUCTURED_ATTEMPTS,
+    StructuredOutputError,
+    buildStructuredRetryPrompt,
+    parseJsonObject,
+)
+from agent.prompt_loader import loadPrompt
 from gateway.utils.llm_utils import get_llm_config as _get_llm_config_shared, normalize_endpoint as _normalize_endpoint_shared
 
 logger = logging.getLogger("audit_service")
 
 # ── LLM 审计系统提示词 ──
-_SAST_SYSTEM_PROMPT = """你是一个严苛的 Linux 系统安全专家。
-你的任务是审计以下 Bash 脚本/命令，分析其意图、破坏性，并揪出任何隐藏的、可疑的或嵌套的执行命令。
-
-要求：
-1. 识别是否有网络请求（curl, wget, nc）
-2. 识别是否有混淆或动态执行代码（eval, exec, source, 管道传给 bash）
-3. 识别是否操作了非业务目录（/etc, /root, /boot）
-4. 仅输出 JSON 格式，严格遵循以下结构：
-{
-  "risk_level": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
-  "summary": "一句话总结脚本在干什么",
-  "findings": [
-    {
-      "severity": "danger" | "warning" | "info",
-      "description": "问题描述",
-      "code_snippet": "相关代码片段",
-      "recommendation": "修复建议"
-    }
-  ],
-  "dangerous_commands": ["提取出的具体高危命令字符串"],
-  "network_requests": true/false,
-  "nested_execution": true/false,
-  "ai_advice": "给管理员的最终建议（不超过30字）"
-}
-
-下面是需要审计的内容："""
+_SAST_SYSTEM_PROMPT = loadPrompt("audit/sast_system.txt")
 
 
 def _get_default_llm_config() -> dict[str, str]:
@@ -59,7 +40,7 @@ def _get_default_llm_config() -> dict[str, str]:
     return result
 
 
-_MAX_RETRIES = 5
+_MAX_RETRIES = MAX_STRUCTURED_ATTEMPTS
 
 
 def _llm_chat(messages: list[dict], config_override: dict[str, str] | None = None) -> str | None:
@@ -158,16 +139,11 @@ def _call_llm_with_retry(system_prompt: str, user_prompt: str) -> str | None:
             return content
 
         # 解析失败：构造修正消息
-        error_msg = f"""你返回的内容 JSON 格式有误，无法解析。
-
-解析错误: {_last_parse_error}
-
-你返回的内容:
-```
-{content[:1500]}
-```
-
-请严格按照要求的 JSON 结构重新输出，不要包含 markdown 围栏之外的文字，确保所有括号都是半角符号。"""
+        error_msg = buildStructuredRetryPrompt(
+            _last_parse_error,
+            content,
+            maxPreviousChars=1500,
+        )
 
         messages.append({"role": "assistant", "content": content})
         messages.append({"role": "user", "content": error_msg})
@@ -223,38 +199,91 @@ def _parse_llm_response(response_text: str) -> dict[str, Any] | None:
         end = text.index("```", start) if "```" in text[start:] else len(text)
         text = text[start:end].strip()
 
-    # 先尝试直接解析，失败则做全角修复后重试
+    # 先尝试直接解析，失败则做全角修复后重试。
     for idx, attempt in enumerate([text, _normalize_json(text)]):
         try:
-            result = json.loads(attempt)
-        except json.JSONDecodeError as exc:
+            result = parseJsonObject(attempt)
+        except (StructuredOutputError, TypeError, ValueError) as exc:
             _last_parse_error = f"第{idx + 1}次尝试: {exc}"
             continue
-        # 验证必填字段
-        if "risk_level" not in result:
-            result["risk_level"] = "MEDIUM"
-        if "summary" not in result:
-            result["summary"] = "未识别到风险"
-        if "findings" not in result:
-            result["findings"] = []
-        if "dangerous_commands" not in result:
-            result["dangerous_commands"] = []
-        if "ai_advice" not in result:
-            result["ai_advice"] = "请人工审核"
+
+        try:
+            _validate_audit_report(result)
+        except StructuredOutputError as exc:
+            _last_parse_error = f"第{idx + 1}次尝试: {exc}"
+            continue
         return result
 
     # 两次都失败
     logger.warning("AI-SAST: LLM 响应非 JSON（前200字符: %s）", text[:200])
-    # 降级: 返回基础报告
-    return {
-        "risk_level": "MEDIUM",
-        "summary": f"LLM 返回了非结构化内容，已降级为中等风险（原文: {text[:100]}）",
-        "findings": [{"severity": "info", "description": "LLM 响应格式异常", "code_snippet": "", "recommendation": "请人工审核"}],
-        "dangerous_commands": [],
-        "network_requests": False,
-        "nested_execution": False,
-        "ai_advice": "请人工审核",
+    # 这里必须返回 None，让上层重试；重试耗尽后的降级由
+    # audit_commands/audit_script_content 的规则审计负责。
+    return None
+
+
+def _validate_audit_report(report: dict[str, Any]) -> None:
+    """校验审计报告的完整结构和字段类型。
+
+    只有 JSON 语法正确还不够：缺字段或字段类型错误同样要退回模型，
+    否则下游会把半结构化内容当成可信审计结论。
+    """
+    required = {
+        "risk_level",
+        "summary",
+        "findings",
+        "dangerous_commands",
+        "network_requests",
+        "nested_execution",
+        "ai_advice",
     }
+    missing = sorted(required - report.keys())
+    if missing:
+        raise StructuredOutputError(f"缺少必填字段: {', '.join(missing)}")
+
+    if report["risk_level"] not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        raise StructuredOutputError("risk_level 不是允许的值")
+    if not isinstance(report["summary"], str) or not report["summary"].strip():
+        raise StructuredOutputError("summary 必须是非空字符串")
+    if type(report["network_requests"]) is not bool:
+        raise StructuredOutputError("network_requests 必须是 boolean")
+    if type(report["nested_execution"]) is not bool:
+        raise StructuredOutputError("nested_execution 必须是 boolean")
+    if not isinstance(report["ai_advice"], str):
+        raise StructuredOutputError("ai_advice 必须是字符串")
+
+    dangerous_commands = report["dangerous_commands"]
+    if (
+        not isinstance(dangerous_commands, list)
+        or not all(isinstance(item, str) for item in dangerous_commands)
+    ):
+        raise StructuredOutputError("dangerous_commands 必须是字符串数组")
+
+    findings = report["findings"]
+    if not isinstance(findings, list):
+        raise StructuredOutputError("findings 必须是数组")
+    finding_fields = {
+        "severity",
+        "description",
+        "code_snippet",
+        "recommendation",
+    }
+    for index, finding in enumerate(findings):
+        if not isinstance(finding, dict):
+            raise StructuredOutputError(f"findings[{index}] 必须是对象")
+        missing_fields = sorted(finding_fields - finding.keys())
+        if missing_fields:
+            raise StructuredOutputError(
+                f"findings[{index}] 缺少必填字段: {', '.join(missing_fields)}"
+            )
+        if finding["severity"] not in {"danger", "warning", "info"}:
+            raise StructuredOutputError(
+                f"findings[{index}].severity 不是允许的值"
+            )
+        for field_name in ("description", "code_snippet", "recommendation"):
+            if not isinstance(finding[field_name], str):
+                raise StructuredOutputError(
+                    f"findings[{index}].{field_name} 必须是字符串"
+                )
 
 
 def audit_commands(commands: list[dict[str, Any]]) -> dict[str, Any]:

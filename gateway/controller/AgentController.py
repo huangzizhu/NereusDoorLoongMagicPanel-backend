@@ -77,6 +77,15 @@ class AgentController(AbstractController):
                 self.sessionService.listSessions(userId, page, pageSize, status, keyword)
             )
 
+        @self.router.get("/status")
+        def getAgentStatus(
+            request: Request,
+            limit: int = Query(5, ge=1, le=20),
+        ):
+            """首页使用：只返回最近几条对话的状态摘要。"""
+            userId = self._getRequestUserId(request)
+            return Response.success(self.sessionService.listRecentStatuses(userId, limit))
+
         @self.router.get("/sessions/{sessionId}/messages")
         def listAgentMessages(request: Request, sessionId: str):
             userId = self._getRequestUserId(request)

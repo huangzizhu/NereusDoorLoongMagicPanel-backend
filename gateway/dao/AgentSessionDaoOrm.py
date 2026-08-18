@@ -10,6 +10,7 @@ from gateway.orm.AgentSessionOrm import AgentSessionOrm
 from gateway.orm.AgentTokenUsageOrm import AgentTokenUsageOrm  # noqa: F401
 from gateway.orm.OrmEngine import OrmEngine
 from pojo.Agent import AgentSessionCreate
+from sqlalchemy import or_
 
 
 class AgentSessionDaoOrm(Singleton):
@@ -72,7 +73,11 @@ class AgentSessionDaoOrm(Singleton):
                 AgentSessionOrm.sessionId == sessionId
             )
             if userId is not None:
-                query = query.filter(AgentSessionOrm.userId == userId)
+                # 巡检会话（userId=0，系统发起）对任意登录用户可读，便于历史回溯
+                query = query.filter(or_(
+                    AgentSessionOrm.userId == userId,
+                    AgentSessionOrm.userId == 0,
+                ))
             orm = query.one_or_none()
             if orm is None:
                 return None
@@ -87,9 +92,10 @@ class AgentSessionDaoOrm(Singleton):
                      keyword: str | None = None) -> tuple[int, list[dict]]:
         session = self.SessionLocal()
         try:
-            query = session.query(AgentSessionOrm).filter(
-                AgentSessionOrm.userId == userId
-            )
+            query = session.query(AgentSessionOrm).filter(or_(
+                AgentSessionOrm.userId == userId,
+                AgentSessionOrm.userId == 0,
+            ))
             if status:
                 query = query.filter(AgentSessionOrm.status == status)
             if keyword:

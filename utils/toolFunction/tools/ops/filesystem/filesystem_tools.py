@@ -59,6 +59,26 @@ def _formatPermissions(mode: int) -> str:
     return result
 
 
+def _lookupUserName(uid: int) -> str | None:
+    """Resolve a UID without failing for users removed from the system."""
+    if not hasattr(pwd, "getpwuid"):
+        return None
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
+def _lookupGroupName(gid: int) -> str | None:
+    """Resolve a GID without failing for groups removed from the system."""
+    if not hasattr(grp, "getgrgid"):
+        return None
+    try:
+        return grp.getgrgid(gid).gr_name
+    except KeyError:
+        return str(gid)
+
+
 def _requireExists(path: Path, label: str = "路径") -> None:
     if not path.exists():
         raise ResourceNotFoundException(f"{label}不存在: {path}")
@@ -90,8 +110,8 @@ def listDirectory(targetPath: str) -> list[FileInfo]:
                     fileName=entry.name,
                     fileType=_resolveFileType(entry),
                     createdTime=datetime.fromtimestamp(st.st_ctime),
-                    owner=pwd.getpwuid(st.st_uid).pw_name if hasattr(pwd, "getpwuid") else None,
-                    group=grp.getgrgid(st.st_gid).gr_name if hasattr(grp, "getgrgid") else None,
+                    owner=_lookupUserName(st.st_uid),
+                    group=_lookupGroupName(st.st_gid),
                     sizeBytes=st.st_size,
                     permissions=_formatPermissions(st.st_mode),
                     modifiedTime=datetime.fromtimestamp(st.st_mtime),
@@ -115,8 +135,8 @@ def listSingleFileOrDirectory(targetPath: str) -> FileInfo:
             fileName=path.name,
             fileType=_resolveFileType(path),
             createdTime=datetime.fromtimestamp(st.st_ctime),
-            owner=pwd.getpwuid(st.st_uid).pw_name if hasattr(pwd, "getpwuid") else None,
-            group=grp.getgrgid(st.st_gid).gr_name if hasattr(grp, "getgrgid") else None,
+            owner=_lookupUserName(st.st_uid),
+            group=_lookupGroupName(st.st_gid),
             sizeBytes=st.st_size,
             permissions=_formatPermissions(st.st_mode),
             modifiedTime=datetime.fromtimestamp(st.st_mtime),
@@ -218,8 +238,8 @@ def _grepFileNames(
                     fileName=file_path.name,
                     fileType=_resolveFileType(file_path),
                     createdTime=datetime.fromtimestamp(st.st_ctime),
-                    owner=pwd.getpwuid(st.st_uid).pw_name if hasattr(pwd, "getpwuid") else None,
-                    group=grp.getgrgid(st.st_gid).gr_name if hasattr(grp, "getgrgid") else None,
+                    owner=_lookupUserName(st.st_uid),
+                    group=_lookupGroupName(st.st_gid),
                     sizeBytes=st.st_size,
                     permissions=_formatPermissions(st.st_mode),
                     modifiedTime=datetime.fromtimestamp(st.st_mtime),
@@ -307,8 +327,8 @@ def _grepFileContent(
                                 fileName=file_path.name,
                                 fileType=_resolveFileType(file_path),
                                 createdTime=datetime.fromtimestamp(st.st_ctime),
-                                owner=pwd.getpwuid(st.st_uid).pw_name if hasattr(pwd, "getpwuid") else None,
-                                group=grp.getgrgid(st.st_gid).gr_name if hasattr(grp, "getgrgid") else None,
+                                owner=_lookupUserName(st.st_uid),
+                                group=_lookupGroupName(st.st_gid),
                                 sizeBytes=st.st_size,
                                 permissions=_formatPermissions(st.st_mode),
                                 modifiedTime=datetime.fromtimestamp(st.st_mtime),

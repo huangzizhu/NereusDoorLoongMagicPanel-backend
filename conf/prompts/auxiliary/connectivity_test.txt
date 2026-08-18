@@ -1,0 +1,3 @@
+This is a connectivity test.
+Reply with exactly one valid JSON object and no other text:
+{"status":"ok"}

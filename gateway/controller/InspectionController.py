@@ -54,9 +54,20 @@ class InspectionController(AbstractController):
 
         @self.router.get("/config")
         def getConfig():
-            return Response.success(self.scheduler.getConfig())
+            data = self.scheduler.getConfig()
+            data["approvalPolicy"] = self.service.loadInspectionPolicy()
+            return Response.success(data)
 
         @self.router.put("/config")
-        def updateConfig(body: InspectionConfigUpdate):
-            self.scheduler.setInspectionInterval(body.intervalMinutes)
-            return Response.success(self.scheduler.getConfig())
+        def updateConfig(request: Request, body: InspectionConfigUpdate):
+            # 策略与调度间隔均属安全相关配置，要求登录
+            self._getRequestUserId(request)
+            if body.intervalMinutes is not None:
+                self.scheduler.setInspectionInterval(body.intervalMinutes)
+            if body.approvalPolicy is not None:
+                self.service.saveInspectionPolicy(
+                    body.approvalPolicy.model_dump(mode="json")
+                )
+            data = self.scheduler.getConfig()
+            data["approvalPolicy"] = self.service.loadInspectionPolicy()
+            return Response.success(data)

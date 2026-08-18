@@ -9,16 +9,29 @@
 """
 from __future__ import annotations
 import asyncio
-import json
 import logging
 from typing import Any
 
 from agent.agent_router.router import AgentMode
 from agent.integration.session import AgentSession as RuntimeAgentSession
+from agent.llm_structured import callStructuredLLM, parseJsonObject
+from agent.prompt_loader import loadPrompt
 from agent.shared.types import AgentEvent, EventType
 from gateway.service.AgentEventBuffer import AgentEventBuffer
 
 _logger = logging.getLogger("ndlmpanel.gateway")
+
+
+def _parseTitleResponse(raw: str) -> str:
+    """校验自动标题响应的 JSON 结构。"""
+    data = parseJsonObject(raw)
+    title = data.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title 必须是非空字符串")
+    title = title.strip()
+    if len(title) > 100:
+        raise ValueError("title 长度不能超过 100 个字符")
+    return title
 
 
 class BackgroundRunner:
@@ -50,6 +63,9 @@ class BackgroundRunner:
         nonInteractiveApprovals: bool = False,
         scheduledApprovalPolicy: dict | None = None,
         includeCoreTools: bool = False,
+        source: str = "manual",
+        autoRunTaskId: int | None = None,
+        autoRunGuidance: str = "",
     ) -> AgentEventBuffer:
         """提交用户消息，返回事件缓冲区。
 
@@ -71,6 +87,9 @@ class BackgroundRunner:
                     "nonInteractiveApprovals": nonInteractiveApprovals,
                     "scheduledApprovalPolicy": scheduledApprovalPolicy,
                     "includeCoreTools": includeCoreTools,
+                    "source": source,
+                    "autoRunTaskId": autoRunTaskId,
+                    "autoRunGuidance": autoRunGuidance,
                 }
 
             sessionState = self._sessions[sessionId]
@@ -78,6 +97,9 @@ class BackgroundRunner:
             sessionState["nonInteractiveApprovals"] = nonInteractiveApprovals
             sessionState["scheduledApprovalPolicy"] = scheduledApprovalPolicy
             sessionState["includeCoreTools"] = includeCoreTools
+            sessionState["source"] = source
+            sessionState["autoRunTaskId"] = autoRunTaskId
+            sessionState["autoRunGuidance"] = autoRunGuidance
 
             if sessionState["running"]:
                 await sessionState["queue"].put(message)
@@ -126,7 +148,6 @@ class BackgroundRunner:
             state = self._sessions.get(sessionId)
             if state is None:
                 return
-            buffer = state["buffer"]
             # 重建 buffer 以完全清空积压事件
             newBuffer = AgentEventBuffer(maxSize=1000)
             state["buffer"] = newBuffer
@@ -497,6 +518,9 @@ class BackgroundRunner:
             ),
             scheduledApprovalPolicy=sessionState.get("scheduledApprovalPolicy"),
             includeCoreTools=bool(sessionState.get("includeCoreTools")),
+            source=str(sessionState.get("source") or "manual"),
+            autoRunTaskId=sessionState.get("autoRunTaskId"),
+            autoRunGuidance=str(sessionState.get("autoRunGuidance") or ""),
         )
         return runtime
 
@@ -566,7 +590,6 @@ class BackgroundRunner:
                 self._titleFallback(sessionId, userMsg)
                 return
 
-            raw_endpoint = endpoint
             if "/anthropic" in endpoint:
                 pass
             elif "api.deepseek.com" in endpoint:
@@ -589,17 +612,18 @@ class BackgroundRunner:
             titleConfig.llm_api_key = api_key
 
             provider = createProvider(titleConfig)
-            resp = await provider.chat([
+            result = await callStructuredLLM(provider, [
                 {
                     "role": "system",
-                    "content": (
-                        "根据对话内容生成一个简洁的对话标题"
-                        "（10字~20字以内），只返回标题本身，不要加引号"
-                    ),
+                    "content": loadPrompt("auxiliary/title_generation.txt"),
                 },
                 {"role": "user", "content": f"用户：{userMsg[:200]}"},
             ])
-            title = (resp.content or "").strip().strip('"').strip("'")
+            if result is None:
+                self._titleFallback(sessionId, userMsg)
+                return
+
+            title = result.value
             if title and len(title) <= 100:
                 self._dao.updateSessionTitle(sessionId, title)
                 _logger.info(

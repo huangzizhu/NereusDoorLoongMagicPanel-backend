@@ -146,7 +146,10 @@ class SystemInfoService(Singleton):
             countRow: int = self.systemInfoDao.setAlertsRead(id)
             if not countRow:
                 raise InvalidParamException(userMessage=f"id为{id}的警告事件不存在！")
-            return self.systemInfoDao.getAlertEventById(id)
+            alert = self.systemInfoDao.getAlertEventById(id)
+            if alert is None:
+                raise InvalidParamException(userMessage=f"id为{id}的警告事件不存在！")
+            return alert
         except InvalidParamException:
             raise
         except Exception as e:
@@ -157,12 +160,14 @@ class SystemInfoService(Singleton):
             countRow: int = self.systemInfoDao.setAlertsProcess(id)
             if not countRow:
                 raise InvalidParamException(userMessage=f"id为{id}的警告事件不存在！")
-            return self.systemInfoDao.getAlertEventById(id)
+            alert = self.systemInfoDao.getAlertEventById(id)
+            if alert is None:
+                raise InvalidParamException(userMessage=f"id为{id}的警告事件不存在！")
+            return alert
         except InvalidParamException:
             raise
         except Exception as e:
             raise DataBaseException(innerMessage=str(e), userMessage="数据库操作错误，请重试或联系管理员", cause=e)
-
 
 
 

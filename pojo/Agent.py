@@ -100,6 +100,8 @@ class AgentSessionCreate(BaseModel):
     profileId: Optional[int] = Field(None, ge=1)
     toolSource: Literal["current_mcp", "stdio"] = "current_mcp"
     safetyPolicy: str = Field(default="default", max_length=50)
+    source: str = Field(default="manual", max_length=32,
+                        description="会话来源: manual / scheduled / inspection")
     mcpServers: Optional[list["McpServerSpec"]] = None
 
 
@@ -132,6 +134,7 @@ class AgentSessionResponse(BaseModel):
     title: str
     mode: str
     status: str
+    source: str = "manual"
     profileId: Optional[int] = None
     toolSource: Literal["current_mcp", "stdio"]
     safetyPolicy: str
@@ -141,6 +144,22 @@ class AgentSessionResponse(BaseModel):
     createdAt: datetime
     updatedAt: datetime
     finishedAt: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentStatusItem(BaseModel):
+    """最近 Agent 对话的轻量状态，用于首页状态卡片。"""
+
+    sessionId: str
+    title: str
+    status: str
+    source: str = "manual"
+    summary: Optional[str] = None
+    lastError: Optional[str] = None
+    createdAt: datetime
+    updatedAt: datetime
+    finishedAt: Optional[datetime] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 

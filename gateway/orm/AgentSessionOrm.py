@@ -14,6 +14,7 @@ class AgentSessionOrm(OrmEngine().getBase()):
     title = Column(String(100), nullable=False)
     mode = Column(String(32), nullable=False, default="agent")
     status = Column(String(32), nullable=False, default="idle")
+    source = Column(String(32), nullable=False, default="manual", index=True)
     profileId = Column(Integer, ForeignKey("agent_llm_profiles.profileId"), nullable=True)
     toolSource = Column(String(50), nullable=False, default="current_mcp")
     mcpServersJson = Column("mcpServers", Text, nullable=True)

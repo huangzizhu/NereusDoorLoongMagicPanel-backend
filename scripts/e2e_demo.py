@@ -32,6 +32,7 @@ from agent.shared.types import AgentConfig, EventType
 from agent.integration.session import AgentSession
 from agent.agent_router.router import AgentMode
 from agent.agent_core.prompt_builder import PromptBuilder
+from agent.prompt_loader import loadPrompt
 # ToolRegistry / getSystemSnapshot 不再使用 — 已从 prompt 中移除
 
 loadDotenv(".env", override=False)
@@ -222,8 +223,8 @@ async def main():
     h(2, "场景 6: Prompt 前缀构造 — 4 层 KV Cache 优化")
 
     builder = PromptBuilder(
-        systemPrompt="你是一个专业的智能运维助手...(v1.1.0, 含 6 个诊断技能)",
-        safetyRules="禁止 rm -rf /, mkfs, chmod 777, ... (9 条禁止规则 + 注入检测)",
+        systemPrompt=loadPrompt("system/v1.2.0.txt"),
+        safetyRules=loadPrompt("safety/rules_summary.txt"),
     )
     from agent.agent_router.router import getModePrompt
     modePrompt = getModePrompt(AgentMode.AGENT)

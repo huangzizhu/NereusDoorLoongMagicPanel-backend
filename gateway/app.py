@@ -21,6 +21,7 @@ from gateway.controller.ModelPricingController import ModelPricingController
 from gateway.controller.AdminController import AdminController
 from gateway.controller.ScheduledTaskController import ScheduledTaskController
 from gateway.controller.InspectionController import InspectionController
+from gateway.controller.OpsExperienceController import OpsExperienceController
 from gateway.internal_rpc import start_backend_rpc_server, stop_backend_rpc_server
 from gateway.scheduler.scheduler import AgentScheduler
 
@@ -56,6 +57,7 @@ class Application:
         self.controllers.append(AdminController())
         self.controllers.append(ScheduledTaskController())
         self.controllers.append(InspectionController())
+        self.controllers.append(OpsExperienceController())
 
     def createApp(self) -> FastAPI:
         self._registerAllController()

@@ -52,6 +52,11 @@ class ToolRegistry:
         self._tools[tool.__name__] = tool
         self._riskLevels[tool.__name__] = _coerceRiskLevel(riskLevel)
 
+    def unregister(self, name: str) -> bool:
+        """按名称移除已注册工具（无人值守模式剔除交互类工具）。"""
+        self._tools.pop(name, None)
+        return self._riskLevels.pop(name, None) is not None
+
     def registerMany(
         self,
         funcs: list[Callable[..., Any]],

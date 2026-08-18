@@ -1,0 +1,1 @@
+使用指引：遇到疑似已知问题时，先调用 searchOpsExperience 检索经验库；处置成功后，调用 submitOpsExperience 沉淀本次处置为新的经验包；用户要求“总结处置过程”或“生成经验包”时也应调用 submitOpsExperience。

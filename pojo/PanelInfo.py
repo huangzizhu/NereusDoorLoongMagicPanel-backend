@@ -73,4 +73,6 @@ class SystemHealthQuery(BaseModel):
     clientTimestamp: int = Field(..., description="客户端时间戳，用于计算延迟")
 class AlertQuery(PageSearchRequest):
     """告警列表查询参数"""
+    page: int = Field(1, ge=1, description="当前页码")
+    pageSize: int = Field(10, ge=1, le=200, description="每页记录数")
     excludeProcessed: bool = Field(False, description="是否排除已处理的告警")

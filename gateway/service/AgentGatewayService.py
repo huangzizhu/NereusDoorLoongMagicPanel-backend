@@ -86,6 +86,9 @@ class AgentGatewayService(Singleton):
         timeoutSeconds: float = 1800.0,
         scheduledApprovalPolicy: dict | None = None,
         includeCoreTools: bool = False,
+        source: str = "manual",
+        autoRunTaskId: int | None = None,
+        autoRunGuidance: str = "",
     ) -> dict[str, Any]:
         """创建临时会话并通过 BackgroundRunner 执行一次后台 Agent。"""
         defaultProfile = self.profileService.getDefaultProfile()
@@ -94,6 +97,7 @@ class AgentGatewayService(Singleton):
             profileId=defaultProfile.profileId if defaultProfile else None,
             mode="agent",
             safetyPolicy="default",
+            source=source[:32] or "manual",
         )
         session = self.sessionDao.createSession(
             sessionId=self._newSessionId(),
@@ -111,6 +115,9 @@ class AgentGatewayService(Singleton):
             nonInteractiveApprovals=True,
             scheduledApprovalPolicy=scheduledApprovalPolicy,
             includeCoreTools=includeCoreTools,
+            source=source,
+            autoRunTaskId=autoRunTaskId,
+            autoRunGuidance=autoRunGuidance,
         )
         errorMessage: str | None = None
         while True:

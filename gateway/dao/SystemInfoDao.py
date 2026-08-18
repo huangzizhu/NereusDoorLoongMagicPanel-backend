@@ -19,8 +19,8 @@ class SystemInfoDao(SystemInfoDaoInterface):
         session = self.SessionLocal()
         try:
             if excludeProcessed:
-                return session.query(func.count(AlertEventOrm.id)).filter(AlertEventOrm.status != 2).scalar()
-            return session.query(func.count(AlertEventOrm.id)).scalar()
+                return int(session.query(func.count(AlertEventOrm.id)).filter(AlertEventOrm.status != 2).scalar() or 0)
+            return int(session.query(func.count(AlertEventOrm.id)).scalar() or 0)
         except Exception:
             raise
         finally:
@@ -32,8 +32,11 @@ class SystemInfoDao(SystemInfoDaoInterface):
             sql = session.query(AlertEventOrm)
             if alertQuery.excludeProcessed:
                 sql = sql.filter(AlertEventOrm.status != 2)
-            if alertQuery.page or alertQuery.pageSize:#分页
-                sql = sql.offset((alertQuery.page - 1) * alertQuery.pageSize).limit(alertQuery.pageSize)
+            sql = sql.order_by(
+                AlertEventOrm.createTime.desc(),
+                AlertEventOrm.id.desc(),
+            )
+            sql = sql.offset((alertQuery.page - 1) * alertQuery.pageSize).limit(alertQuery.pageSize)
             alertOrms: List[AlertEventOrm]  =  sql.all()
             return [AlertEvent.model_validate(alertOrm) for alertOrm in alertOrms]
         except Exception:
@@ -65,10 +68,11 @@ class SystemInfoDao(SystemInfoDaoInterface):
         finally:
             session.close()
 
-    def getAlertEventById(self, id: int) -> AlertEvent:
+    def getAlertEventById(self, id: int) -> AlertEvent | None:
         session = self.SessionLocal()
         try:
-            return session.query(AlertEventOrm).filter(AlertEventOrm.id == id).one_or_none()
+            alertOrm = session.query(AlertEventOrm).filter(AlertEventOrm.id == id).one_or_none()
+            return AlertEvent.model_validate(alertOrm) if alertOrm is not None else None
         except Exception:
             raise
         finally:
@@ -96,7 +100,6 @@ class SystemInfoDao(SystemInfoDaoInterface):
             raise
         finally:
             session.close()
-
 
 
 

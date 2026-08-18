@@ -8,6 +8,8 @@ from Exception.DataBaseException import DataBaseException
 from Exception.InvalidParamException import InvalidParamException
 from agent.config_envs.loader import loadConfig
 from agent.llm_providers.factory import createProvider
+from agent.llm_structured import callStructuredLLM, parseJsonObject
+from agent.prompt_loader import loadPrompt
 from agent.shared.types import AgentConfig
 from gateway.Singleton import Singleton, singletonInit
 from gateway.dao.AgentConfigDaoOrm import AgentConfigDaoOrm
@@ -22,6 +24,14 @@ from pojo.Agent import (
     AgentLlmProfileUpdate,
 )
 from pojo.Common import ListResponse
+
+
+def _parseConnectivityResponse(raw: str) -> str:
+    """校验模型连通性测试的结构化响应，并返回兼容的 OK 文本。"""
+    data = parseJsonObject(raw)
+    if data.get("status") != "ok":
+        raise ValueError("status 必须为 ok")
+    return "OK"
 
 
 class AgentLlmProfileService(Singleton):
@@ -189,12 +199,16 @@ class AgentLlmProfileService(Singleton):
         started = time.perf_counter()
         try:
             provider = createProvider(config)
-            response = await provider.chat([
+            result = await callStructuredLLM(provider, [
                 {
                     "role": "user",
-                    "content": "This is a connectivity test. Reply with exactly: OK",
+                    "content": loadPrompt("auxiliary/connectivity_test.txt"),
                 }
             ])
+            if result is None:
+                raise RuntimeError(
+                    "模型连通性测试响应未通过结构化校验（已重试 5 次）"
+                )
             latencyMs = (time.perf_counter() - started) * 1000
             return AgentLlmProfileTestResponse(
                 profileId=profile.profileId,
@@ -202,9 +216,9 @@ class AgentLlmProfileService(Singleton):
                 model=profile.model,
                 available=True,
                 latencyMs=round(latencyMs, 2),
-                content=response.content,
-                finishReason=response.finish_reason,
-                usage=response.usage,
+                content=result.value,
+                finishReason=result.response.finish_reason,
+                usage=result.response.usage,
             )
         except Exception as exc:
             latencyMs = (time.perf_counter() - started) * 1000

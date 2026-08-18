@@ -1,0 +1,2 @@
+经验库当前为空。
+使用指引：完成一次故障处置、部署或优化后，调用 submitOpsExperience 沉淀经验包。正文写清现象、原因、处置步骤和验证结果，可按需附带 stages、pitfalls、earlyWarnings 结构化字段；用户要求“总结处置过程”或“生成经验包”时也应调用。遇到疑似已知问题时，可调用 searchOpsExperience 检索，经验库会随沉淀增长。

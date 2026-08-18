@@ -25,20 +25,22 @@ Base URLs:
 
 # Authentication
 
+- HTTP Authentication, scheme: bearer
+
 # 用户
 
 ## POST 登录
 
 POST /user/login
 
-用户登录接口，免鉴权。请求体中的 account 支持用户名或邮箱，hashedPassword 为前端提交的密码字符串。登录成功后服务端会同时写入 HttpOnly Cookie：accessToken（5 分钟）与 refreshToken（7 天），并在响应体 data 中返回 token 对。常见失败场景包括账号不存在、密码错误或数据库异常。
+使用用户名或邮箱及密码登录。成功时响应 data 返回 accessToken 和 refreshToken，并分别设置 HttpOnly Cookie：accessToken 有效期 5 分钟，refreshToken 有效期 7 天。
 
 > Body 请求参数
 
 ```json
 {
-    "account": "admin",
-    "hashedPassword": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92"
+  "account": "string",
+  "hashedPassword": "string"
 }
 ```
 
@@ -49,30 +51,21 @@ POST /user/login
 |accessToken|cookie|string| 否 |none|
 |refreshToken|cookie|string| 否 |none|
 |body|body|object| 是 |none|
-|» account|body|string| 是 |用户名 或 邮箱（二合一字段）|
-|» hashedPassword|body|string| 是 |哈西后密码|
+|» account|body|string| 是 |用户名或邮箱|
+|» hashedPassword|body|string| 是 |密码字段|
 
 > 返回示例
 
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImV4cCI6MTc3NjI1ODIyNH0.JZERii_XC3lPPG_pHDT9B-BAaH21Q6PaDlGFtzVyYMY",
-        "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImV4cCI6MTc3Njg2MTIyNH0.SJnzixLCUbsR-A31CLLamL12eF-O3tJ_093P_jtPvJk"
-    }
-}
-```
+> 200 Response
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImV4cCI6MTc3NjI2MDI2MX0.Nz7Z8GUmz3Wh_8IYSceb0D-TNnvIc3D24Rqq7pDQSq4",
-        "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImV4cCI6MTc3Njg2MzI2MX0.4OuhEBlREmB73o5n5jT_e4-Ls-ckRdKXE_wGP1AJxzM"
-    }
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "accessToken": "eyJ...",
+    "refreshToken": "eyJ..."
+  }
 }
 ```
 
@@ -80,32 +73,34 @@ POST /user/login
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
 
 ### 返回数据结构
 
 状态码 **200**
 
+*业务成功时 code 为 1。*
+
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
 |» data|object|true|none||none|
-|»» accessToken|string|true|none||none|
-|»» refreshToken|string|true|none||none|
+|»» accessToken|string|true|none||JWT access token，同时通过 HttpOnly Cookie 写入|
+|»» refreshToken|string|true|none||刷新 token，同时通过 HttpOnly Cookie 写入|
 
 ## DELETE 登出
 
 DELETE /user/logout
 
-用户登出接口。请求时会从 Cookie 中读取 refreshToken，并要求当前请求已通过 accessToken 鉴权。服务端会删除 refreshToken 对应的持久化记录，同时清理 accessToken 和 refreshToken 两个 Cookie。若 refreshToken 缺失、无效或已失效，会返回对应业务错误。
+使用 refreshToken Cookie 注销服务端刷新令牌，并清除 accessToken 与 refreshToken Cookie。
 
 ### 请求参数
 
 |名称|位置|类型|必选|说明|
 |---|---|---|---|---|
+|refreshToken|cookie|string| 是 |登录后由服务端写入的 HttpOnly Cookie，有效期 7 天。|
 |accessToken|cookie|string| 否 |none|
-|refreshToken|cookie|string| 否 |none|
 
 > 返回示例
 
@@ -113,9 +108,11 @@ DELETE /user/logout
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": null
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
 }
 ```
 
@@ -123,23 +120,37 @@ DELETE /user/logout
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
 
 ### 返回数据结构
 
 状态码 **200**
 
+*业务成功时 code 为 1。*
+
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
-|» data|null|true|none||none|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
 
 ## POST 刷新访问令牌
 
 POST /user/refresh
 
-刷新 accessToken，接口本身免 accessToken 鉴权，但必须携带有效的 refreshToken Cookie。服务端会校验 refreshToken 对应用户及有效期，成功后生成新的 accessToken，并重新写入 accessToken / refreshToken Cookie；响应体 data 中也会返回新的 token 对。若 refreshToken 无效、过期或已被注销，会返回 401 相关错误。
+使用 refreshToken Cookie 签发新的 accessToken；成功后重新设置两个 Cookie。refreshToken 无效或过期时返回 401。
 
 ### 请求参数
 
@@ -154,12 +165,208 @@ POST /user/refresh
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImV4cCI6MTc3NjI1OTQ2OX0.P2s6PY2oG4exihuZJrFUT_BAYlDaPal1KuRR_fsYysU",
-        "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImV4cCI6MTc3Njg2MzI2MX0.4OuhEBlREmB73o5n5jT_e4-Ls-ckRdKXE_wGP1AJxzM"
-    }
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "accessToken": "eyJ...",
+    "refreshToken": "eyJ..."
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» accessToken|string|true|none||JWT access token，同时通过 HttpOnly Cookie 写入|
+|»» refreshToken|string|true|none||刷新 token，同时通过 HttpOnly Cookie 写入|
+
+# 系统信息
+
+<a id="opIdgetSystemInfoHealthSSE_system_health_get"></a>
+
+## GET 系统健康 SSE
+
+GET /system/health
+
+建立系统健康 SSE 长连接。需要 accessToken Cookie；成功响应为 text/event-stream，每约 2 秒发送一条 data: <json>\n\n，直到客户端断开。事件 JSON 包含 hostname、CPU/内存/磁盘使用率、healthScore/status，以及 CPU、内存、GPU、磁盘分区和网卡明细。
+
+### 请求参数
+
+|名称|位置|类型|必选|说明|
+|---|---|---|---|---|
+|accessToken|cookie|string| 否 |none|
+|refreshToken|cookie|string| 否 |none|
+
+> 返回示例
+
+> 200 Response
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|持续推送事件；每条记录形如 data: <json>\n\n|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» hostname|string|false|none||none|
+|» cpuUsage|number|false|none||none|
+|» memoryUsage|number|false|none||none|
+|» diskUsage|number|false|none||none|
+|» healthScore|integer|false|none||none|
+|» status|integer|false|none||0 正常，1 警告，2 异常|
+|» cpuInfo|object|false|none||none|
+|»» modelName|string|false|none||none|
+|»» coreCount|integer|false|none||none|
+|»» usagePercent|number|false|none||none|
+|»» load1Min|number|false|none||none|
+|»» load5Min|number|false|none||none|
+|»» load15Min|number|false|none||none|
+|» memoryInfo|object|false|none||none|
+|»» totalBytes|integer|false|none||none|
+|»» usedBytes|integer|false|none||none|
+|»» availableBytes|integer|false|none||none|
+|»» usagePercent|number|false|none||none|
+|»» swapTotalBytes|integer|false|none||none|
+|»» swapUsedBytes|integer|false|none||none|
+|»» swapUsagePercent|number|false|none||none|
+|» gpuInfos|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|[string]|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» diskInfos|[object]|false|none||none|
+|»» mountPoint|string|false|none||none|
+|»» fileSystem|string|false|none||none|
+|»» totalBytes|integer|false|none||none|
+|»» usedBytes|integer|false|none||none|
+|»» usagePercent|number|false|none||none|
+|»» readBytesPerSec|number|false|none||none|
+|»» writeBytesPerSec|number|false|none||none|
+|» networkInfos|[object]|false|none||none|
+|»» interfaceName|string|false|none||none|
+|»» ipAddress|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» macAddress|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» recvBytesPerSec|number|false|none||none|
+|»» sentBytesPerSec|number|false|none||none|
+|»» totalRecvBytes|integer|false|none||none|
+|»» totalSentBytes|integer|false|none||none|
+|»» isUp|boolean|false|none||none|
+
+<a id="opIdgetAllSystemAlerts_system_alerts_all_post"></a>
+
+## POST 查询告警列表
+
+POST /system/alerts/all
+
+分页查询系统告警。需要 accessToken Cookie。请求体 page/pageSize（代码允许从 0 开始但建议 page>=1，pageSize 1..200）和 excludeProcessed；data 为 {total,items[]}，每项含 level(0/1/2)、message、status(0 未读/1 未处理/2 已处理)、id、createTime。
+
+> Body 请求参数
+
+```json
+{
+  "page": 1,
+  "pageSize": 10,
+  "excludeProcessed": false
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|说明|
+|---|---|---|---|---|
+|accessToken|cookie|string| 否 |none|
+|refreshToken|cookie|string| 否 |none|
+|body|body|object| 是 |none|
+|» page|body|integer| 是 |none|
+|» pageSize|body|integer| 是 |none|
+|» excludeProcessed|body|boolean| 是 |none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "level": 1,
+        "message": "CPU 使用率超过 80%",
+        "status": 0,
+        "id": 1,
+        "createTime": "2026-08-17T10:00:00Z"
+      }
+    ]
+  }
 }
 ```
 
@@ -167,9 +374,25 @@ POST /user/refresh
 
 ```json
 {
-    "code": 40104,
-    "msg": "token无效",
-    "data": null
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
 }
 ```
 
@@ -178,7 +401,8 @@ POST /user/refresh
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
@@ -186,139 +410,40 @@ POST /user/refresh
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
 |» data|object|true|none||none|
-|»» accessToken|string|true|none||none|
-|»» refreshToken|string|true|none||none|
+|»» total|integer|false|none||none|
+|»» items|[object]|false|none||none|
+|»»» level|integer|false|none||0 Info，1 Warning，2 Error|
+|»»» message|string|false|none||none|
+|»»» status|integer|false|none||0 未读，1 未处理，2 已处理|
+|»»» id|integer|false|none||none|
+|»»» createTime|string(date-time)|false|none||none|
 
 状态码 **401**
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
 |» data|null|true|none||none|
 
-# 系统信息
-
-## GET 系统健康 SSE
-
-GET /system/health
-
-SSE 实时推送系统健康状态。接口返回 `text/event-stream`，每约 2 秒推送一次，单条事件内容为 `data: <json>\n\n`。无需请求体；建立连接后服务端会持续输出当前主机的 `hostname`、`cpuUsage`、`memoryUsage`、`diskUsage`、`healthScore`、`status`，以及 `cpuInfo`、`memoryInfo`、`gpuInfos`、`diskInfos`、`networkInfos` 等详细结构。该接口已在全局中间件中豁免常规日志记录，客户端断开连接后服务端会自动停止推送。
-
-### 请求参数
-
-|名称|位置|类型|必选|说明|
-|---|---|---|---|---|
-|accessToken|cookie|string| 否 |none|
-|refreshToken|cookie|string| 否 |none|
-
-> 返回示例
-
-> 200 Response
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## POST 查询告警列表
-
-POST /system/alerts/all
-
-分页查询系统告警事件。请求体继承 `PageSearchRequest`，需要提供 `page`、`pageSize`，并可通过 `excludeProcessed` 控制是否排除已处理告警。响应 `data` 为 `{ total, items }`，每条告警包含 `id`、`level`、`message`、`status`、`createTime`。其中 `status` 取值为 `0=未读`、`1=未处理`、`2=已处理`。
-
-> Body 请求参数
-
-```json
-{
-    "page": 0,
-    "pageSize": 0,
-    "excludeProcessed": true
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|说明|
-|---|---|---|---|---|
-|accessToken|cookie|string| 否 |none|
-|refreshToken|cookie|string| 否 |none|
-|body|body|object| 是 |none|
-|» page|body|integer| 是 |页码|
-|» pageSize|body|integer| 是 |每页数量|
-|» excludeProcessed|body|boolean| 是 |是否排除已处理的告警|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "total": 3,
-        "items": [
-            {
-                "level": 1,
-                "message": "CPU使用率超过80%，请检查",
-                "status": 0,
-                "id": 1,
-                "createTime": "2026-04-15T11:34:59"
-            },
-            {
-                "level": 2,
-                "message": "数据库连接失败",
-                "status": 1,
-                "id": 2,
-                "createTime": "2026-04-15T11:39:59"
-            },
-            {
-                "level": 0,
-                "message": "系统重启完成",
-                "status": 2,
-                "id": 3,
-                "createTime": "2026-04-15T11:29:59"
-            }
-        ]
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-状态码 **200**
+状态码 **422**
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
 |» data|object|true|none||none|
-|»» total|integer|true|none||none|
-|»» items|[object]|true|none||none|
-|»»» level|integer|true|none||none|
-|»»» message|string|true|none||none|
-|»»» status|integer|true|none||none|
-|»»» id|integer|true|none||none|
-|»»» createTime|string|true|none||none|
+
+<a id="opIdsetAlertsRead_system_alerts_id_read_put"></a>
 
 ## PUT 标记告警已读
 
 PUT /system/alerts/{id}/read
 
-将指定告警标记为已读。通过路径参数 `id` 指定告警记录，成功后返回更新后的 `AlertEvent`。如果 `id` 不存在，服务端会返回业务错误。
+将告警 status 更新为 1（未处理/已读）。需要 accessToken Cookie。id 为告警主键；不存在时返回 code=0 和明确提示；成功返回更新后的 AlertEvent。
 
 ### 请求参数
 
@@ -326,7 +451,7 @@ PUT /system/alerts/{id}/read
 |---|---|---|---|---|
 |accessToken|cookie|string| 否 |none|
 |refreshToken|cookie|string| 否 |none|
-|id|path|integer| 是 |none|
+|id|path|integer| 是 |告警主键|
 
 > 返回示例
 
@@ -334,15 +459,41 @@ PUT /system/alerts/{id}/read
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "level": 1,
-        "message": "CPU使用率超过80%，请检查",
-        "createTime": "2026-04-15T11:34:59",
-        "id": 1,
-        "status": 1
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "level": 1,
+    "message": "CPU 使用率超过 80%",
+    "status": 1,
+    "id": 1,
+    "createTime": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -351,6 +502,8 @@ PUT /system/alerts/{id}/read
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
@@ -358,20 +511,38 @@ PUT /system/alerts/{id}/read
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
 |» data|object|true|none||none|
-|»» level|integer|true|none||none|
-|»» message|string|true|none||none|
-|»» createTime|string|true|none||none|
-|»» id|integer|true|none||none|
-|»» status|integer|true|none||none|
+|»» level|integer|false|none||0 Info，1 Warning，2 Error|
+|»» message|string|false|none||none|
+|»» status|integer|false|none||0 未读，1 未处理，2 已处理|
+|»» id|integer|false|none||none|
+|»» createTime|string(date-time)|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdsetAlertsProcess_system_alerts_id_process_put"></a>
 
 ## PUT 标记告警已处理
 
 PUT /system/alerts/{id}/process
 
-将指定告警标记为已处理。通过路径参数 `id` 指定告警记录，成功后返回更新后的 `AlertEvent`。如果 `id` 不存在，服务端会返回业务错误。
+将告警 status 更新为 2（已处理）。需要 accessToken Cookie。id 为告警主键；不存在时返回 code=0；成功返回更新后的 AlertEvent。
 
 ### 请求参数
 
@@ -379,7 +550,7 @@ PUT /system/alerts/{id}/process
 |---|---|---|---|---|
 |accessToken|cookie|string| 否 |none|
 |refreshToken|cookie|string| 否 |none|
-|id|path|integer| 是 |none|
+|id|path|integer| 是 |告警主键|
 
 > 返回示例
 
@@ -387,15 +558,41 @@ PUT /system/alerts/{id}/process
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "level": 2,
-        "message": "数据库连接失败",
-        "createTime": "2026-04-15T11:39:59",
-        "id": 2,
-        "status": 2
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "level": 2,
+    "message": "数据库连接失败",
+    "status": 2,
+    "id": 2,
+    "createTime": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -404,6 +601,8 @@ PUT /system/alerts/{id}/process
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
@@ -411,14 +610,30 @@ PUT /system/alerts/{id}/process
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
 |» data|object|true|none||none|
-|»» level|integer|true|none||none|
-|»» message|string|true|none||none|
-|»» createTime|string|true|none||none|
-|»» id|integer|true|none||none|
-|»» status|integer|true|none||none|
+|»» level|integer|false|none||0 Info，1 Warning，2 Error|
+|»» message|string|false|none||none|
+|»» status|integer|false|none||0 未读，1 未处理，2 已处理|
+|»» id|integer|false|none||none|
+|»» createTime|string(date-time)|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
 
 ## GET Agent 状态查询
 
@@ -1615,15 +1830,12 @@ GET /file/read/{path}
 
 POST /file/write
 
-覆盖写入文本文件内容。请求体包含 `path` 和 `content`，目标路径必须已存在且必须是文件。成功时返回文本写入结果；若路径不存在、不是文件或权限不足，会返回业务错误。
+覆盖写入指定的文本文件。请求体必须提供 `path` 与 `content`；目标必须已存在、是普通文件且具有写入权限。服务端不会创建缺失文件，也不会对内容进行追加。成功时返回写入结果；路径不存在、目标不是文件或底层写入失败时返回业务错误。
 
 > Body 请求参数
 
 ```json
-{
-  "path": "string",
-  "context": "string"
-}
+{"path":"/tmp/example.txt","content":"hello world"}
 ```
 
 ### 请求参数
@@ -1633,8 +1845,8 @@ POST /file/write
 |accessToken|cookie|string| 否 |none|
 |refreshToken|cookie|string| 否 |none|
 |body|body|object| 是 |none|
-|» path|body|string| 是 |none|
-|» context|body|string| 是 |none|
+|» path|body|string| 是 |待写入的文本文件绝对路径|
+|» content|body|string| 是 |要覆盖写入的完整文本内容|
 
 > 返回示例
 
@@ -2498,11 +2710,11 @@ GET /firewall/ssh/logs
 
 # 设置/apikey
 
-## POST 创建凭证
+## POST 创建 API 凭证
 
 POST /config/apikey
 
-新增上游模型 API 凭证配置，用于保存 OpenAI、Azure、Anthropic 或 Custom 提供商的访问凭证。请求体必须包含 apiKey，其他字段用于控制启用状态、备注、额度限制与自定义 baseUrl。创建成功后返回 credentialId 和 maskedKey，只返回脱敏后的 Key，不会回显完整 apiKey。
+创建 API 凭证。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
 
 > Body 请求参数
 
@@ -2511,10 +2723,10 @@ POST /config/apikey
   "name": "string",
   "provider": "OpenAI",
   "baseUrl": "string",
+  "apiKey": "stringstri",
   "isActive": true,
   "description": "string",
-  "quotaLimit": 0,
-  "apiKey": "string"
+  "quotaLimit": 0
 }
 ```
 
@@ -2522,16 +2734,22 @@ POST /config/apikey
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
 |body|body|object| 是 ||none|
-|» name|body|string| 否 ||凭证别名|
-|» provider|body|string| 否 ||服务商类型|
-|» baseUrl|body|string| 否 ||自定义请求地址|
+|» name|body|string| 是 ||凭证别名|
+|» provider|body|string| 是 ||服务商|
+|» baseUrl|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||自定义请求地址|
+|»» *anonymous*|body|null| 否 ||none|
+|» apiKey|body|string| 是 ||完整 API Key；仅创建时提交，响应永不返回原文|
 |» isActive|body|boolean| 否 ||是否启用|
-|» description|body|string| 否 ||备注说明|
-|» quotaLimit|body|integer| 否 ||预算额度限制，0表示没有|
-|» apiKey|body|string| 是 ||完整的API Key|
+|» description|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||备注|
+|»» *anonymous*|body|null| 否 ||none|
+|» quotaLimit|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||预算额度限制|
+|»» *anonymous*|body|null| 否 ||none|
 
 #### 枚举值
 
@@ -2545,560 +2763,36 @@ POST /config/apikey
 > 返回示例
 
 > 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "name": "apiKey1",
-        "provider": "Custom",
-        "baseUrl": "https://both-hello.com/",
-        "isActive": true,
-        "description": "六效西头我重地在步。快历取好见值龙圆造产。重器部机确周。点素事却者近。",
-        "quotaLimit": 69.0,
-        "credentialId": 17,
-        "maskedKey": "sk-*********************************************312",
-        "usedQuota": 0.0,
-        "expireAt": null,
-        "lastUsedAt": null,
-        "createTime": "2026-04-19T16:07:36.562958",
-        "updateTime": "2026-04-19T16:07:36.562965"
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-状态码 **200**
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
-|» data|object|true|none||none|
-|»» name|string|true|none||none|
-|»» provider|string|true|none||none|
-|»» baseUrl|string|true|none||none|
-|»» isActive|boolean|true|none||none|
-|»» description|string|true|none||none|
-|»» quotaLimit|integer|true|none||none|
-|»» credentialId|integer|true|none||none|
-|»» maskedKey|string|true|none||none|
-|»» usedQuota|integer|true|none||none|
-|»» expireAt|null|true|none||none|
-|»» lastUsedAt|null|true|none||none|
-|»» createTime|string|true|none||none|
-|»» updateTime|string|true|none||none|
-
-## GET 查询凭证列表
-
-GET /config/apikey
-
-查询当前系统保存的全部模型 API 凭证。响应 data 为 { total, items }，items 中包含 credentialId、provider、isActive、quotaLimit、usedQuota、maskedKey 等展示字段，但不返回原始 apiKey，适合设置页直接渲染列表。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "total": 4,
-        "items": [
-            {
-                "name": "言呈轩",
-                "provider": "Custom",
-                "baseUrl": "https://winged-tribe.net/",
-                "isActive": false,
-                "description": "石资角克。书算照比级证酸应。消在他始示能大记。个因边学局多难。内极任什上。原备始持行基。克会动整。什价运万精问地林行。",
-                "quotaLimit": 69.0,
-                "credentialId": 1,
-                "maskedKey": "sk-*********************************************312",
-                "usedQuota": 0.0,
-                "expireAt": null,
-                "lastUsedAt": null,
-                "createTime": "2026-04-20T14:29:14.509514",
-                "updateTime": "2026-04-20T14:48:31.639942"
-            },
-            {
-                "name": "apiKey1",
-                "provider": "Custom",
-                "baseUrl": "https://both-hello.com/",
-                "isActive": true,
-                "description": "六效西头我重地在步。快历取好见值龙圆造产。重器部机确周。点素事却者近。",
-                "quotaLimit": 69.0,
-                "credentialId": 2,
-                "maskedKey": "sk-*********************************************312",
-                "usedQuota": 0.0,
-                "expireAt": null,
-                "lastUsedAt": null,
-                "createTime": "2026-04-20T14:49:27.477739",
-                "updateTime": "2026-04-20T14:49:27.477745"
-            },
-            {
-                "name": "apiKey1",
-                "provider": "Custom",
-                "baseUrl": "https://both-hello.com/",
-                "isActive": true,
-                "description": "六效西头我重地在步。快历取好见值龙圆造产。重器部机确周。点素事却者近。",
-                "quotaLimit": 69.0,
-                "credentialId": 3,
-                "maskedKey": "sk-*********************************************312",
-                "usedQuota": 0.0,
-                "expireAt": null,
-                "lastUsedAt": null,
-                "createTime": "2026-04-20T14:49:28.303467",
-                "updateTime": "2026-04-20T14:49:28.303472"
-            },
-            {
-                "name": "apiKey1",
-                "provider": "Custom",
-                "baseUrl": "https://both-hello.com/",
-                "isActive": true,
-                "description": "六效西头我重地在步。快历取好见值龙圆造产。重器部机确周。点素事却者近。",
-                "quotaLimit": 69.0,
-                "credentialId": 4,
-                "maskedKey": "sk-*********************************************312",
-                "usedQuota": 0.0,
-                "expireAt": null,
-                "lastUsedAt": null,
-                "createTime": "2026-04-20T14:49:29.200166",
-                "updateTime": "2026-04-20T14:49:29.200170"
-            }
-        ]
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-状态码 **200**
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
-|» data|object|true|none||none|
-|»» total|integer|true|none||none|
-|»» items|[object]|true|none||none|
-|»»» name|string|true|none||none|
-|»»» provider|string|true|none||none|
-|»»» baseUrl|string|true|none||none|
-|»»» isActive|boolean|true|none||none|
-|»»» description|string|true|none||none|
-|»»» quotaLimit|integer|true|none||none|
-|»»» credentialId|integer|true|none||none|
-|»»» maskedKey|string|true|none||none|
-|»»» usedQuota|integer|true|none||none|
-|»»» expireAt|null|true|none||none|
-|»»» lastUsedAt|null|true|none||none|
-|»»» createTime|string|true|none||none|
-|»»» updateTime|string|true|none||none|
-
-## PUT 更新凭证
-
-PUT /config/apikey
-
-更新已存在的模型 API 凭证。通过请求体中的 credentialId 指定目标记录，可修改名称、baseUrl、是否启用、备注与额度限制。更新成功后返回最新的脱敏凭证信息，不会回显完整 apiKey；若 credentialId 不存在，会返回业务错误。
-
-> Body 请求参数
-
-```json
-{
-  "name": "string",
-  "provider": "OpenAI",
-  "baseUrl": "string",
-  "isActive": true,
-  "description": "string",
-  "quotaLimit": 0,
-  "credentialId": 0
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|body|body|object| 是 ||none|
-|» name|body|string| 否 ||凭证别名|
-|» provider|body|string| 否 ||服务商类型|
-|» baseUrl|body|string¦null| 否 ||自定义请求地址|
-|» isActive|body|boolean| 否 ||是否启用|
-|» description|body|string¦null| 否 ||备注说明|
-|» quotaLimit|body|number¦null| 否 ||预算额度限制|
-|» credentialId|body|integer| 是 ||none|
-
-#### 枚举值
-
-|属性|值|
-|---|---|
-|» provider|OpenAI|
-|» provider|Azure|
-|» provider|Anthropic|
-|» provider|Custom|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "name": "言呈轩",
-        "provider": "Custom",
-        "baseUrl": "https://winged-tribe.net/",
-        "isActive": false,
-        "description": "石资角克。书算照比级证酸应。消在他始示能大记。个因边学局多难。内极任什上。原备始持行基。克会动整。什价运万精问地林行。",
-        "quotaLimit": 69.0,
-        "credentialId": 1,
-        "maskedKey": "sk-*********************************************312",
-        "usedQuota": 0.0,
-        "expireAt": null,
-        "lastUsedAt": null,
-        "createTime": "2026-04-20T14:29:14.509514",
-        "updateTime": "2026-04-20T14:35:48.023500"
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-状态码 **200**
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
-|» data|object|true|none||none|
-|»» name|string|true|none||none|
-|»» provider|string|true|none||none|
-|»» baseUrl|string|true|none||none|
-|»» isActive|boolean|true|none||none|
-|»» description|string|true|none||none|
-|»» quotaLimit|integer|true|none||none|
-|»» credentialId|integer|true|none||none|
-|»» maskedKey|string|true|none||none|
-|»» usedQuota|integer|true|none||none|
-|»» expireAt|null|true|none||none|
-|»» lastUsedAt|null|true|none||none|
-|»» createTime|string|true|none||none|
-|»» updateTime|string|true|none||none|
-
-## DELETE 删除凭证
-
-DELETE /config/apikey/{credentialId}
-
-删除指定的模型 API 凭证。通过路径参数 credentialId 指定目标记录，删除成功后返回 code=1、data=null。若目标凭证不存在，服务端会返回对应业务错误。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|credentialId|path|integer| 是 ||none|
-
-> 返回示例
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": null
-}
-```
-
-```json
-{
-    "code": 0,
-    "msg": "删除失败，不存在id为9999999999的apikey项",
-    "data": null
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-状态码 **200**
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
-|» data|null|true|none||none|
-
-# 设置/model
-
-## GET 根据 Credential 拉取官方模型列表
-
-GET /agent/llm/credentials/{credentialId}/models
-
-响应示例：
 
 ```json
 {
   "code": 1,
   "msg": "success",
   "data": {
-    "credentialId": 1,
-    "credentialName": "deepseek-key",
-    "credentialProvider": "Custom",
-    "credentialBaseUrl": "https://api.deepseek.com/anthropic",
-    "sourceUrl": "https://api.deepseek.com/models",
-    "models": [
-      {
-        "id": "deepseek-chat",
-        "name": "deepseek-chat",
-        "ownedBy": "deepseek",
-        "raw": {
-          "id": "deepseek-chat",
-          "object": "model",
-          "owned_by": "deepseek"
-        }
-      }
-    ]
+    "credentialId": 3,
+    "name": "OpenAI 生产",
+    "provider": "OpenAI",
+    "baseUrl": "https://api.openai.com/v1",
+    "isActive": true,
+    "description": "生产模型",
+    "quotaLimit": 100,
+    "maskedKey": "sk-***xyz",
+    "usedQuota": 0,
+    "expireAt": null,
+    "lastUsedAt": null,
+    "createTime": "2026-08-16T15:00:00",
+    "updateTime": "2026-08-16T15:00:00"
   }
 }
 ```
 
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|credentialId|path|integer| 是 ||none|
-
-> 返回示例
-
-> 200 Response
+> 401 Response
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "credentialId": 7,
-        "credentialName": "my",
-        "credentialProvider": "Custom",
-        "credentialBaseUrl": "http://38.165.23.223:8317/v1",
-        "sourceUrl": "http://38.165.23.223:8317/v1/models",
-        "models": [
-            {
-                "id": "gemini-2.5-flash-lite",
-                "name": "gemini-2.5-flash-lite",
-                "ownedBy": "google",
-                "raw": {
-                    "created": 1753142400,
-                    "id": "gemini-2.5-flash-lite",
-                    "object": "model",
-                    "owned_by": "google"
-                }
-            },
-            {
-                "id": "GPT-5.4",
-                "name": "GPT-5.4",
-                "ownedBy": "miao",
-                "raw": {
-                    "created": 1780934671,
-                    "id": "GPT-5.4",
-                    "object": "model",
-                    "owned_by": "miao"
-                }
-            },
-            {
-                "id": "gpt-5.3-codex-spark",
-                "name": "gpt-5.3-codex-spark",
-                "ownedBy": "openai",
-                "raw": {
-                    "created": 1770912000,
-                    "id": "gpt-5.3-codex-spark",
-                    "object": "model",
-                    "owned_by": "openai"
-                }
-            },
-            {
-                "id": "gpt-5.4-mini",
-                "name": "gpt-5.4-mini",
-                "ownedBy": "openai",
-                "raw": {
-                    "created": 1773705600,
-                    "id": "gpt-5.4-mini",
-                    "object": "model",
-                    "owned_by": "openai"
-                }
-            },
-            {
-                "id": "gpt-5.5",
-                "name": "gpt-5.5",
-                "ownedBy": "openai",
-                "raw": {
-                    "created": 1776902400,
-                    "id": "gpt-5.5",
-                    "object": "model",
-                    "owned_by": "openai"
-                }
-            },
-            {
-                "id": "gemini-2.5-flash",
-                "name": "gemini-2.5-flash",
-                "ownedBy": "google",
-                "raw": {
-                    "created": 1750118400,
-                    "id": "gemini-2.5-flash",
-                    "object": "model",
-                    "owned_by": "google"
-                }
-            },
-            {
-                "id": "gemini-3-pro-preview",
-                "name": "gemini-3-pro-preview",
-                "ownedBy": "google",
-                "raw": {
-                    "created": 1737158400,
-                    "id": "gemini-3-pro-preview",
-                    "object": "model",
-                    "owned_by": "google"
-                }
-            },
-            {
-                "id": "gpt-5.4",
-                "name": "gpt-5.4",
-                "ownedBy": "openai",
-                "raw": {
-                    "created": 1772668800,
-                    "id": "gpt-5.4",
-                    "object": "model",
-                    "owned_by": "openai"
-                }
-            },
-            {
-                "id": "codex-auto-review",
-                "name": "codex-auto-review",
-                "ownedBy": "openai",
-                "raw": {
-                    "created": 1776902400,
-                    "id": "codex-auto-review",
-                    "object": "model",
-                    "owned_by": "openai"
-                }
-            },
-            {
-                "id": "gemini-2.5-pro",
-                "name": "gemini-2.5-pro",
-                "ownedBy": "google",
-                "raw": {
-                    "created": 1750118400,
-                    "id": "gemini-2.5-pro",
-                    "object": "model",
-                    "owned_by": "google"
-                }
-            },
-            {
-                "id": "gemini-3.1-pro-preview",
-                "name": "gemini-3.1-pro-preview",
-                "ownedBy": "google",
-                "raw": {
-                    "created": 1771459200,
-                    "id": "gemini-3.1-pro-preview",
-                    "object": "model",
-                    "owned_by": "google"
-                }
-            },
-            {
-                "id": "gemini-3-flash-preview",
-                "name": "gemini-3-flash-preview",
-                "ownedBy": "google",
-                "raw": {
-                    "created": 1765929600,
-                    "id": "gemini-3-flash-preview",
-                    "object": "model",
-                    "owned_by": "google"
-                }
-            },
-            {
-                "id": "gemini-3.1-flash-lite-preview",
-                "name": "gemini-3.1-flash-lite-preview",
-                "ownedBy": "google",
-                "raw": {
-                    "created": 1776288000,
-                    "id": "gemini-3.1-flash-lite-preview",
-                    "object": "model",
-                    "owned_by": "google"
-                }
-            },
-            {
-                "id": "GPT-5.5",
-                "name": "GPT-5.5",
-                "ownedBy": "miao",
-                "raw": {
-                    "created": 1780934671,
-                    "id": "GPT-5.5",
-                    "object": "model",
-                    "owned_by": "miao"
-                }
-            },
-            {
-                "id": "GPT-5.4 Mini",
-                "name": "GPT-5.4 Mini",
-                "ownedBy": "miao",
-                "raw": {
-                    "created": 1780934671,
-                    "id": "GPT-5.4 Mini",
-                    "object": "model",
-                    "owned_by": "miao"
-                }
-            },
-            {
-                "id": "gpt-image-2",
-                "name": "gpt-image-2",
-                "ownedBy": "openai",
-                "raw": {
-                    "created": 1704067200,
-                    "id": "gpt-image-2",
-                    "object": "model",
-                    "owned_by": "openai"
-                }
-            }
-        ]
-    }
+  "code": 1,
+  "msg": "success",
+  "data": {}
 }
 ```
 
@@ -3106,165 +2800,941 @@ GET /agent/llm/credentials/{credentialId}/models
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
 
 状态码 **200**
 
+*业务成功时 code 为 1。*
+
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
 |» data|object|true|none||none|
-|»» credentialId|integer|true|none||none|
-|»» credentialName|string|true|none||none|
-|»» credentialProvider|string|true|none||none|
-|»» credentialBaseUrl|string|true|none||none|
-|»» sourceUrl|string|true|none||none|
+|»» credentialId|integer|true|none||凭证 ID|
+|»» name|string|true|none||凭证别名|
+|»» provider|string|true|none||服务商|
+|»» baseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||自定义请求地址|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isActive|boolean|true|none||是否启用|
+|»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» quotaLimit|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|number|false|none||预算额度限制|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» maskedKey|string|true|none||仅返回脱敏 API Key；不会返回原始 apiKey|
+|»» usedQuota|number|true|none||已使用额度|
+|»» expireAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||过期时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastUsedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||最后使用时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createTime|string(date-time)|true|none||创建时间|
+|»» updateTime|string(date-time)|true|none||更新时间|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|provider|OpenAI|
+|provider|Azure|
+|provider|Anthropic|
+|provider|Custom|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询 API 凭证列表
+
+GET /config/apikey
+
+查询 API 凭证列表。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» credentialId|integer|true|none||凭证 ID|
+|»»» name|string|true|none||凭证别名|
+|»»» provider|string|true|none||服务商|
+|»»» baseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||自定义请求地址|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» isActive|boolean|true|none||是否启用|
+|»»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» quotaLimit|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|number|false|none||预算额度限制|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» maskedKey|string|true|none||仅返回脱敏 API Key；不会返回原始 apiKey|
+|»»» usedQuota|number|true|none||已使用额度|
+|»»» expireAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||过期时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» lastUsedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||最后使用时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createTime|string(date-time)|true|none||创建时间|
+|»»» updateTime|string(date-time)|true|none||更新时间|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|provider|OpenAI|
+|provider|Azure|
+|provider|Anthropic|
+|provider|Custom|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## PUT 更新 API 凭证
+
+PUT /config/apikey
+
+更新 API 凭证。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+> Body 请求参数
+
+```json
+{
+  "credentialId": 1,
+  "name": "string",
+  "baseUrl": "string",
+  "isActive": true,
+  "description": "string",
+  "quotaLimit": 0
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|body|body|object| 是 ||none|
+|» credentialId|body|integer| 是 ||待更新的凭证 ID|
+|» name|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||新别名|
+|»» *anonymous*|body|null| 否 ||none|
+|» baseUrl|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||新 Base URL|
+|»» *anonymous*|body|null| 否 ||none|
+|» isActive|body|any| 否 ||none|
+|»» *anonymous*|body|boolean| 否 ||启用状态|
+|»» *anonymous*|body|null| 否 ||none|
+|» description|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||备注|
+|»» *anonymous*|body|null| 否 ||none|
+|» quotaLimit|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||预算额度限制|
+|»» *anonymous*|body|null| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» credentialId|integer|true|none||凭证 ID|
+|»» name|string|true|none||凭证别名|
+|»» provider|string|true|none||服务商|
+|»» baseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||自定义请求地址|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isActive|boolean|true|none||是否启用|
+|»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» quotaLimit|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|number|false|none||预算额度限制|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» maskedKey|string|true|none||仅返回脱敏 API Key；不会返回原始 apiKey|
+|»» usedQuota|number|true|none||已使用额度|
+|»» expireAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||过期时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastUsedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||最后使用时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createTime|string(date-time)|true|none||创建时间|
+|»» updateTime|string(date-time)|true|none||更新时间|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|provider|OpenAI|
+|provider|Azure|
+|provider|Anthropic|
+|provider|Custom|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## DELETE 删除 API 凭证
+
+DELETE /config/apikey/{credentialId}
+
+删除 API 凭证。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|credentialId|path|integer| 是 ||凭证 ID。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» credentialId|integer|true|none||凭证 ID|
+|»» name|string|true|none||凭证别名|
+|»» provider|string|true|none||服务商|
+|»» baseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||自定义请求地址|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isActive|boolean|true|none||是否启用|
+|»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» quotaLimit|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|number|false|none||预算额度限制|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» maskedKey|string|true|none||仅返回脱敏 API Key；不会返回原始 apiKey|
+|»» usedQuota|number|true|none||已使用额度|
+|»» expireAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||过期时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastUsedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||最后使用时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createTime|string(date-time)|true|none||创建时间|
+|»» updateTime|string(date-time)|true|none||更新时间|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|provider|OpenAI|
+|provider|Azure|
+|provider|Anthropic|
+|provider|Custom|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+# 设置/model
+
+## GET 根据凭证拉取官方模型列表
+
+GET /agent/llm/credentials/{credentialId}/models
+
+对已启用且配置 Base URL 的凭证请求其 /models 端点，返回供应商模型列表。该请求会访问外部供应商，失败以业务错误返回。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|credentialId|path|integer| 是 ||凭证 ID。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» credentialId|integer|true|none||凭证 ID|
+|»» credentialName|string|true|none||凭证名|
+|»» credentialProvider|string|true|none||供应商|
+|»» credentialBaseUrl|string|true|none||Base URL|
+|»» sourceUrl|string|true|none||实际请求的 /models 地址|
 |»» models|[object]|true|none||none|
-|»»» id|string|true|none||none|
-|»»» name|string|true|none||none|
-|»»» ownedBy|string|true|none||none|
-|»»» raw|object|true|none||none|
-|»»»» created|integer|true|none||none|
-|»»»» id|string|true|none||none|
-|»»»» object|string|true|none||none|
-|»»»» owned_by|string|true|none||none|
+|»»» id|string|true|none||模型 ID|
+|»»» name|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||显示名|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» ownedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||拥有者|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» raw|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
 
 ## POST 创建 LLM Profile
 
 POST /agent/llm/profiles
 
-请求体：
+创建 LLM Profile。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+> Body 请求参数
 
 ```json
 {
-  "name": "DeepSeek 默认",
+  "name": "string",
   "credentialId": 1,
-  "model": "deepseek-v4-pro",
-  "maxTokens": 65536,
-  "temperature": 0.1,
-  "retryCount": 3,
-  "retryDelay": 2.0,
-  "isDefault": true,
+  "model": "string",
+  "maxTokens": 1,
+  "contextWindow": 1,
+  "temperature": 2,
+  "retryCount": 0,
+  "retryDelay": 0,
+  "isDefault": false,
   "isActive": true,
-  "description": "比赛演示默认模型"
+  "description": "string"
 }
 ```
 
-字段说明：
+### 请求参数
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| name | string | 是 | Profile 名称 |
-| credentialId | integer | 是 | 关联 `api_credentials.credentialId`，provider、endpoint、apiKey 均从该凭证读取 |
-| model | string | 是 | 模型名称 |
-| maxTokens | integer | 否 | 最大 token 数，默认 `4096` |
-| temperature | number | 否 | 温度，默认 `0.1` |
-| retryCount | integer | 否 | 重试次数，默认 `3` |
-| retryDelay | number | 否 | 重试间隔，默认 `2.0` |
-| isDefault | boolean | 否 | 是否默认 |
-| isActive | boolean | 否 | 是否启用 |
-| description | string | 否 | 描述 |
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|body|body|object| 是 ||none|
+|» name|body|string| 是 ||显示名称|
+|» credentialId|body|integer| 是 ||关联凭证 ID|
+|» model|body|string| 是 ||模型标识|
+|» maxTokens|body|integer| 否 ||最大输出 token，默认 4096|
+|» contextWindow|body|integer| 否 ||上下文窗口，默认 1048576|
+|» temperature|body|number| 否 ||采样温度，默认 0.1|
+|» retryCount|body|integer| 否 ||重试次数，默认 3|
+|» retryDelay|body|number| 否 ||重试间隔秒数，默认 2|
+|» isDefault|body|boolean| 否 ||是否设为默认|
+|» isActive|body|boolean| 否 ||是否启用|
+|» description|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||备注|
+|»» *anonymous*|body|null| 否 ||none|
 
-响应示例：
+> 返回示例
+
+> 200 Response
 
 ```json
 {
   "code": 1,
   "msg": "success",
   "data": {
-    "profileId": 1,
-    "name": "DeepSeek 默认",
-    "credentialId": 1,
-    "credentialName": "deepseek-key",
-    "credentialProvider": "Custom",
-    "credentialBaseUrl": "https://api.deepseek.com/anthropic",
-    "model": "deepseek-v4-pro",
-    "maxTokens": 65536,
-    "temperature": 0.1,
-    "retryCount": 3,
-    "retryDelay": 2.0,
-    "isDefault": true,
-    "isActive": true,
-    "description": "比赛演示默认模型",
-    "createTime": "2026-06-09T13:00:00",
-    "updateTime": "2026-06-09T13:00:00"
+    "note": "请结合响应 JSON Schema 查看字段定义。"
   }
 }
 ```
 
-注意事项：
-
-- 响应永远不会返回完整 API Key。
-- `credentialId` 指向已有的 `/config/apikey` 凭证，Profile 自身不保存 `provider` 和 `endpoint`。
-- Agent 实际请求时使用 credential 的 `baseUrl` 作为 endpoint，使用 credential 的 `apiKey` 作为密钥。
-- `api_credentials.provider` 当前会映射为 Agent 的 `openai_compat` provider；如果 endpoint 包含 `/anthropic`，现有 LLM 工厂仍会自动使用 Anthropic 兼容请求格式。
-- 如果 `isDefault=true`，其他 Profile 会被取消默认。
-- 如果只想离线测试，不创建默认 Profile 或停用默认 Profile 时，Agent 会走现有配置 fallback；fallback 仍不可用时会进入 mock 兜底。
-
-> Body 请求参数
+> 401 Response
 
 ```json
 {
-  "name": "DeepSeek 默认",
-  "credentialId": 1,
-  "model": "deepseek-v4-pro",
-  "maxTokens": 65536,
-  "temperature": 0.1,
-  "retryCount": 3,
-  "retryDelay": 2.0,
-  "isDefault": true,
-  "isActive": true,
-  "description": "比赛演示默认模型"
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|body|body|object| 是 ||none|
-|» name|body|string| 是 ||none|
-|» credentialId|body|integer| 是 ||none|
-|» model|body|string| 是 ||none|
-|» maxTokens|body|integer| 否 ||none|
-|» temperature|body|number| 否 ||none|
-|» retryCount|body|integer| 否 ||none|
-|» retryDelay|body|integer| 否 ||none|
-|» isDefault|body|boolean| 否 ||none|
-|» isActive|body|boolean| 否 ||none|
-|» description|body|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "name": "gpt",
-        "credentialId": 7,
-        "model": "gpt-5.4-mini",
-        "maxTokens": 65536,
-        "temperature": 0.1,
-        "retryCount": 3,
-        "retryDelay": 2.0,
-        "isDefault": true,
-        "isActive": true,
-        "description": "比赛演示默认模型",
-        "profileId": 2,
-        "createTime": "2026-06-09T15:18:52.752333",
-        "updateTime": "2026-06-09T15:18:52.752340",
-        "credentialName": "my",
-        "credentialProvider": "Custom",
-        "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-    }
+  "code": 1,
+  "msg": "success",
+  "data": {}
 }
 ```
 
@@ -3272,431 +3742,157 @@ POST /agent/llm/profiles
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## GET 查询 LLM Profile 列表
-
-GET /agent/llm/profiles
-
-注意事项：
-
-- 默认 Profile 会排在前面。
-- 返回 `credentialName`、`credentialProvider`、`credentialBaseUrl`，不返回 `apiKey`。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "total": 3,
-        "items": [
-            {
-                "name": "GPT-5.4",
-                "credentialId": 7,
-                "model": "GPT-5.4",
-                "maxTokens": 65536,
-                "temperature": 0.1,
-                "retryCount": 3,
-                "retryDelay": 2.0,
-                "isDefault": true,
-                "isActive": true,
-                "description": "批量导入模型",
-                "profileId": 3,
-                "createTime": "2026-06-09T15:21:56.398820",
-                "updateTime": "2026-06-09T15:21:56.398826",
-                "credentialName": "my",
-                "credentialProvider": "Custom",
-                "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-            },
-            {
-                "name": "gpt-5.5",
-                "credentialId": 7,
-                "model": "gpt-5.5",
-                "maxTokens": 65536,
-                "temperature": 0.1,
-                "retryCount": 3,
-                "retryDelay": 2.0,
-                "isDefault": false,
-                "isActive": true,
-                "description": "批量导入模型",
-                "profileId": 4,
-                "createTime": "2026-06-09T15:21:56.410885",
-                "updateTime": "2026-06-09T15:21:56.410888",
-                "credentialName": "my",
-                "credentialProvider": "Custom",
-                "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-            },
-            {
-                "name": "gpt",
-                "credentialId": 7,
-                "model": "gpt-5.4-mini",
-                "maxTokens": 65536,
-                "temperature": 0.1,
-                "retryCount": 3,
-                "retryDelay": 2.0,
-                "isDefault": false,
-                "isActive": true,
-                "description": "比赛演示默认模型",
-                "profileId": 2,
-                "createTime": "2026-06-09T15:18:52.752333",
-                "updateTime": "2026-06-09T15:21:56.397866",
-                "credentialName": "my",
-                "credentialProvider": "Custom",
-                "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-            }
-        ]
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
 
 状态码 **200**
 
+*业务成功时 code 为 1。*
+
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
 |» data|object|true|none||none|
-|»» total|integer|true|none||none|
-|»» items|[object]|true|none||none|
-|»»» name|string|true|none||none|
-|»»» credentialId|integer|true|none||none|
-|»»» model|string|true|none||none|
-|»»» maxTokens|integer|true|none||none|
-|»»» temperature|number|true|none||none|
-|»»» retryCount|integer|true|none||none|
-|»»» retryDelay|integer|true|none||none|
-|»»» isDefault|boolean|true|none||none|
-|»»» isActive|boolean|true|none||none|
-|»»» description|string|true|none||none|
-|»»» profileId|integer|true|none||none|
-|»»» createTime|string|true|none||none|
-|»»» updateTime|string|true|none||none|
-|»»» credentialName|string|true|none||none|
-|»»» credentialProvider|string|true|none||none|
-|»»» credentialBaseUrl|string|true|none||none|
+|»» profileId|integer|true|none||Profile ID|
+|»» name|string|true|none||显示名称|
+|»» credentialId|integer|true|none||关联凭证 ID|
+|»» model|string|true|none||模型标识|
+|»» maxTokens|integer|true|none||单次最大输出 token，1 至 393216|
+|»» contextWindow|integer|true|none||上下文窗口，1 至 10485760|
+|»» temperature|number|true|none||采样温度，0 至 2|
+|»» retryCount|integer|true|none||重试次数|
+|»» retryDelay|number|true|none||重试间隔秒数|
+|»» isDefault|boolean|true|none||是否默认 Profile|
+|»» isActive|boolean|true|none||是否启用|
+|»» description|any|false|none||none|
 
-## GET 查询默认 LLM Profile
+*anyOf*
 
-GET /agent/llm/profiles/default
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||备注|
 
-注意事项：
+*or*
 
-- 只返回 `isDefault=true` 且 `isActive=true` 的 Profile。
-- 没有默认 Profile 时，`data` 可能为 `null`。
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createTime|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updateTime|string(date-time)|true|none||ISO 8601 更新时间|
+|»» credentialName|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证名称|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» credentialProvider|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证供应商|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» credentialBaseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证 Base URL|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询 LLM Profile 列表
+
+GET /agent/llm/profiles
+
+查询 LLM Profile 列表。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
 
 ### 请求参数
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
 
 > 返回示例
 
 > 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "name": "GPT-5.4",
-        "credentialId": 7,
-        "model": "GPT-5.4",
-        "maxTokens": 65536,
-        "temperature": 0.1,
-        "retryCount": 3,
-        "retryDelay": 2.0,
-        "isDefault": true,
-        "isActive": true,
-        "description": "批量导入模型",
-        "profileId": 3,
-        "createTime": "2026-06-09T15:21:56.398820",
-        "updateTime": "2026-06-09T15:21:56.398826",
-        "credentialName": "my",
-        "credentialProvider": "Custom",
-        "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## PUT 更新 LLM Profile
-
-PUT /agent/llm/profiles/{profileId}
-
-请求体字段均可选：
-
-```json
-{
-  "name": "DeepSeek 备用",
-  "temperature": 0.2,
-  "isActive": true,
-  "description": "备用模型"
-}
-```
-注意事项：
-
-- 如果更新时传 `isDefault=true`，其他 Profile 会被取消默认。
-- 不允许通过此接口直接修改 provider、endpoint 或 API Key；这些字段仍通过 `/config/apikey` 管理。
-
-> Body 请求参数
-
-```json
-{
-    "name": "gpt-5.4-mini",
-    "temperature": 1,
-    "isActive": false,
-    "description": "列较联群。目技温第公方声。京很时点值位。着选打。适铁整例才。管持构反确求。更采节准年说领。究张离林场己。"
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|profileId|path|integer| 是 ||none|
-|body|body|object| 是 ||none|
-|» name|body|string| 否 ||none|
-|» temperature|body|number| 否 ||none|
-|» isActive|body|boolean| 否 ||none|
-|» description|body|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "name": "gpt-5.4-mini",
-        "credentialId": 7,
-        "model": "gpt-5.4-mini",
-        "maxTokens": 65536,
-        "temperature": 1.0,
-        "retryCount": 3,
-        "retryDelay": 2.0,
-        "isDefault": false,
-        "isActive": false,
-        "description": "列较联群。目技温第公方声。京很时点值位。着选打。适铁整例才。管持构反确求。更采节准年说领。究张离林场己。",
-        "profileId": 2,
-        "createTime": "2026-06-09T15:18:52.752333",
-        "updateTime": "2026-06-09T15:31:13.724435",
-        "credentialName": "my",
-        "credentialProvider": "Custom",
-        "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## DELETE 删除 LLM Profile
-
-DELETE /agent/llm/profiles/{profileId}
-
-注意事项：
-
-- 如果已有历史 Session 绑定了该 Profile，删除后这些 Session 后续运行可能无法通过该 `profileId` 找到配置。
-- 找不到 Profile 时会返回参数错误。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|profileId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## POST 批量创建 LLM Profile
-
-POST /agent/llm/profiles/batch
-
-  "description": "批量导入模型"
-}
-```
-
-响应示例：
 
 ```json
 {
   "code": 1,
   "msg": "success",
   "data": {
-    "total": 2,
-    "items": [
-      {
-        "profileId": 1,
-        "name": "DeepSeek-deepseek-chat",
-        "credentialId": 1,
-        "credentialName": "deepseek-key",
-        "credentialProvider": "Custom",
-        "credentialBaseUrl": "https://api.deepseek.com/anthropic",
-        "model": "deepseek-chat",
-        "maxTokens": 65536,
-        "temperature": 0.1,
-        "retryCount": 3,
-        "retryDelay": 2.0,
-        "isDefault": true,
-        "isActive": true,
-        "description": "批量导入模型",
-        "createTime": "2026-06-09T13:00:00",
-        "updateTime": "2026-06-09T13:00:00"
-      }
-    ]
+    "note": "请结合响应 JSON Schema 查看字段定义。"
   }
 }
 ```
 
-注意事项：
-
-- `models` 传模型 ID 字符串数组，通常来自 `GET /agent/llm/credentials/{credentialId}/models` 的 `models[].id`。
-- 后端会去掉空字符串并对模型名去重。
-- `namePrefix` 不传时，Profile 名称直接使用模型 ID。
-- `namePrefix` 传入时，Profile 名称格式为 `{namePrefix}-{model}`，最长保留 100 字符。
-- `isDefaultFirst=true` 时，只会把第一个创建成功的 Profile 设为默认；其他 Profile 为非默认。
-- 批量创建不会直接修改 provider、endpoint 或 API Key，这些字段仍来自 credential。
-
-> Body 请求参数
+> 401 Response
 
 ```json
 {
-  "credentialId": 7,
-  "models": [
-    "GPT-5.4",
-    "gpt-5.5"
-  ],
-  "maxTokens": 65536,
-  "temperature": 0.1,
-  "retryCount": 3,
-  "retryDelay": 2.0,
-  "isDefaultFirst": true,
-  "isActive": true,
-  "description": "批量导入模型"
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|body|body|object| 是 ||none|
-|» credentialId|body|integer| 是 ||none|
-|» models|body|[string]| 是 ||none|
-|» namePrefix|body|string| 是 ||none|
-|» maxTokens|body|integer| 是 ||none|
-|» temperature|body|number| 是 ||none|
-|» retryCount|body|integer| 是 ||none|
-|» retryDelay|body|integer| 是 ||none|
-|» isDefaultFirst|body|boolean| 是 ||none|
-|» isActive|body|boolean| 是 ||none|
-|» description|body|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "total": 2,
-        "items": [
-            {
-                "name": "GPT-5.4",
-                "credentialId": 7,
-                "model": "GPT-5.4",
-                "maxTokens": 65536,
-                "temperature": 0.1,
-                "retryCount": 3,
-                "retryDelay": 2.0,
-                "isDefault": true,
-                "isActive": true,
-                "description": "批量导入模型",
-                "profileId": 3,
-                "createTime": "2026-06-09T15:21:56.398820",
-                "updateTime": "2026-06-09T15:21:56.398826",
-                "credentialName": "my",
-                "credentialProvider": "Custom",
-                "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-            },
-            {
-                "name": "gpt-5.5",
-                "credentialId": 7,
-                "model": "gpt-5.5",
-                "maxTokens": 65536,
-                "temperature": 0.1,
-                "retryCount": 3,
-                "retryDelay": 2.0,
-                "isDefault": false,
-                "isActive": true,
-                "description": "批量导入模型",
-                "profileId": 4,
-                "createTime": "2026-06-09T15:21:56.410885",
-                "updateTime": "2026-06-09T15:21:56.410888",
-                "credentialName": "my",
-                "credentialProvider": "Custom",
-                "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-            }
-        ]
-    }
+  "code": 1,
+  "msg": "success",
+  "data": {}
 }
 ```
 
@@ -3704,26 +3900,808 @@ POST /agent/llm/profiles/batch
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» profileId|integer|true|none||Profile ID|
+|»»» name|string|true|none||显示名称|
+|»»» credentialId|integer|true|none||关联凭证 ID|
+|»»» model|string|true|none||模型标识|
+|»»» maxTokens|integer|true|none||单次最大输出 token，1 至 393216|
+|»»» contextWindow|integer|true|none||上下文窗口，1 至 10485760|
+|»»» temperature|number|true|none||采样温度，0 至 2|
+|»»» retryCount|integer|true|none||重试次数|
+|»»» retryDelay|number|true|none||重试间隔秒数|
+|»»» isDefault|boolean|true|none||是否默认 Profile|
+|»»» isActive|boolean|true|none||是否启用|
+|»»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createTime|string(date-time)|true|none||ISO 8601 创建时间|
+|»»» updateTime|string(date-time)|true|none||ISO 8601 更新时间|
+|»»» credentialName|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证名称|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» credentialProvider|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证供应商|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» credentialBaseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证 Base URL|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询默认 LLM Profile
+
+GET /agent/llm/profiles/default
+
+查询默认 LLM Profile。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|object|false|none||none|
+|»»» profileId|integer|true|none||Profile ID|
+|»»» name|string|true|none||显示名称|
+|»»» credentialId|integer|true|none||关联凭证 ID|
+|»»» model|string|true|none||模型标识|
+|»»» maxTokens|integer|true|none||单次最大输出 token，1 至 393216|
+|»»» contextWindow|integer|true|none||上下文窗口，1 至 10485760|
+|»»» temperature|number|true|none||采样温度，0 至 2|
+|»»» retryCount|integer|true|none||重试次数|
+|»»» retryDelay|number|true|none||重试间隔秒数|
+|»»» isDefault|boolean|true|none||是否默认 Profile|
+|»»» isActive|boolean|true|none||是否启用|
+|»»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createTime|string(date-time)|true|none||ISO 8601 创建时间|
+|»»» updateTime|string(date-time)|true|none||ISO 8601 更新时间|
+|»»» credentialName|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证名称|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» credentialProvider|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证供应商|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» credentialBaseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证 Base URL|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## PUT 更新 LLM Profile
+
+PUT /agent/llm/profiles/{profileId}
+
+更新 LLM Profile。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+> Body 请求参数
+
+```json
+{
+  "name": "string",
+  "credentialId": 1,
+  "model": "string",
+  "maxTokens": 1,
+  "contextWindow": 1,
+  "temperature": 2,
+  "retryCount": 0,
+  "retryDelay": 0,
+  "isDefault": false,
+  "isActive": true,
+  "description": "string"
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|profileId|path|integer| 是 ||LLM Profile ID。|
+|body|body|object| 是 ||none|
+|» name|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||显示名称|
+|»» *anonymous*|body|null| 否 ||none|
+|» credentialId|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||关联凭证 ID|
+|»» *anonymous*|body|null| 否 ||none|
+|» model|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||模型标识|
+|»» *anonymous*|body|null| 否 ||none|
+|» maxTokens|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||最大输出 token，默认 4096|
+|»» *anonymous*|body|null| 否 ||none|
+|» contextWindow|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||上下文窗口，默认 1048576|
+|»» *anonymous*|body|null| 否 ||none|
+|» temperature|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||采样温度，默认 0.1|
+|»» *anonymous*|body|null| 否 ||none|
+|» retryCount|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||重试次数，默认 3|
+|»» *anonymous*|body|null| 否 ||none|
+|» retryDelay|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||重试间隔秒数，默认 2|
+|»» *anonymous*|body|null| 否 ||none|
+|» isDefault|body|any| 否 ||none|
+|»» *anonymous*|body|boolean| 否 ||是否设为默认|
+|»» *anonymous*|body|null| 否 ||none|
+|» isActive|body|any| 否 ||none|
+|»» *anonymous*|body|boolean| 否 ||是否启用|
+|»» *anonymous*|body|null| 否 ||none|
+|» description|body|any| 否 ||none|
+|»» *anonymous*|body|any| 否 ||none|
+|»»» *anonymous*|body|string| 否 ||备注|
+|»»» *anonymous*|body|null| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» profileId|integer|true|none||Profile ID|
+|»» name|string|true|none||显示名称|
+|»» credentialId|integer|true|none||关联凭证 ID|
+|»» model|string|true|none||模型标识|
+|»» maxTokens|integer|true|none||单次最大输出 token，1 至 393216|
+|»» contextWindow|integer|true|none||上下文窗口，1 至 10485760|
+|»» temperature|number|true|none||采样温度，0 至 2|
+|»» retryCount|integer|true|none||重试次数|
+|»» retryDelay|number|true|none||重试间隔秒数|
+|»» isDefault|boolean|true|none||是否默认 Profile|
+|»» isActive|boolean|true|none||是否启用|
+|»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createTime|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updateTime|string(date-time)|true|none||ISO 8601 更新时间|
+|»» credentialName|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证名称|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» credentialProvider|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证供应商|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» credentialBaseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证 Base URL|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## DELETE 删除 LLM Profile
+
+DELETE /agent/llm/profiles/{profileId}
+
+删除 LLM Profile。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|profileId|path|integer| 是 ||LLM Profile ID。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## POST 批量创建 LLM Profile
+
+POST /agent/llm/profiles/batch
+
+使用一个凭证批量创建去重后的模型 Profile。models 会去除空白与重复项；isDefaultFirst 只影响第一条新 Profile。
+
+> Body 请求参数
+
+```json
+{
+  "credentialId": 1,
+  "models": [
+    "string"
+  ],
+  "namePrefix": "string",
+  "maxTokens": 4096,
+  "contextWindow": 1048576,
+  "temperature": 0.1,
+  "retryCount": 3,
+  "retryDelay": 2,
+  "isDefaultFirst": false,
+  "isActive": true,
+  "description": "string"
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|body|body|object| 是 ||none|
+|» credentialId|body|integer| 是 ||关联凭证 ID|
+|» models|body|[string]| 是 ||none|
+|» namePrefix|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||批量名称前缀|
+|»» *anonymous*|body|null| 否 ||none|
+|» maxTokens|body|integer| 否 ||默认 4096|
+|» contextWindow|body|integer| 否 ||默认 1048576|
+|» temperature|body|number| 否 ||默认 0.1|
+|» retryCount|body|integer| 否 ||默认 3|
+|» retryDelay|body|number| 否 ||默认 2 秒|
+|» isDefaultFirst|body|boolean| 否 ||第一个创建的 Profile 是否设为默认|
+|» isActive|body|boolean| 否 ||是否启用|
+|» description|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||备注|
+|»» *anonymous*|body|null| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» profileId|integer|true|none||Profile ID|
+|»»» name|string|true|none||显示名称|
+|»»» credentialId|integer|true|none||关联凭证 ID|
+|»»» model|string|true|none||模型标识|
+|»»» maxTokens|integer|true|none||单次最大输出 token，1 至 393216|
+|»»» contextWindow|integer|true|none||上下文窗口，1 至 10485760|
+|»»» temperature|number|true|none||采样温度，0 至 2|
+|»»» retryCount|integer|true|none||重试次数|
+|»»» retryDelay|number|true|none||重试间隔秒数|
+|»»» isDefault|boolean|true|none||是否默认 Profile|
+|»»» isActive|boolean|true|none||是否启用|
+|»»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createTime|string(date-time)|true|none||ISO 8601 创建时间|
+|»»» updateTime|string(date-time)|true|none||ISO 8601 更新时间|
+|»»» credentialName|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证名称|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» credentialProvider|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证供应商|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» credentialBaseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||凭证 Base URL|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
 
 ## PUT 设置默认 LLM Profile
 
 PUT /agent/llm/profiles/{profileId}/default
 
-注意事项：
-
-- 目标 Profile 必须存在且 `isActive=true`。
-- 设置成功后，其他 Profile 会被取消默认。
+设置默认 LLM Profile。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
 
 ### 请求参数
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
-|profileId|path|string| 是 ||none|
+|profileId|path|integer| 是 ||LLM Profile ID。|
 
 > 返回示例
 
@@ -3731,26 +4709,21 @@ PUT /agent/llm/profiles/{profileId}/default
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "name": "GPT-5.4",
-        "credentialId": 7,
-        "model": "GPT-5.4",
-        "maxTokens": 65536,
-        "temperature": 0.1,
-        "retryCount": 3,
-        "retryDelay": 2.0,
-        "isDefault": true,
-        "isActive": true,
-        "description": "批量导入模型",
-        "profileId": 3,
-        "createTime": "2026-06-09T15:21:56.398820",
-        "updateTime": "2026-06-09T15:32:36.028018",
-        "credentialName": "my",
-        "credentialProvider": "Custom",
-        "credentialBaseUrl": "http://38.165.23.223:8317/v1"
-    }
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
 }
 ```
 
@@ -3758,33 +4731,136 @@ PUT /agent/llm/profiles/{profileId}/default
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» profileId|integer|true|none||Profile ID|
+|»» name|string|true|none||显示名称|
+|»» credentialId|integer|true|none||关联凭证 ID|
+|»» model|string|true|none||模型标识|
+|»» maxTokens|integer|true|none||单次最大输出 token，1 至 393216|
+|»» contextWindow|integer|true|none||上下文窗口，1 至 10485760|
+|»» temperature|number|true|none||采样温度，0 至 2|
+|»» retryCount|integer|true|none||重试次数|
+|»» retryDelay|number|true|none||重试间隔秒数|
+|»» isDefault|boolean|true|none||是否默认 Profile|
+|»» isActive|boolean|true|none||是否启用|
+|»» description|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||备注|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createTime|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updateTime|string(date-time)|true|none||ISO 8601 更新时间|
+|»» credentialName|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证名称|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» credentialProvider|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证供应商|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» credentialBaseUrl|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||凭证 Base URL|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
 
 ## POST 测试 LLM Profile 连通性
 
 POST /agent/llm/profiles/{profileId}/test
 
-对指定 LLM Profile 发起一次最小化连通性测试，用于验证凭证、Base URL 和模型名是否可正常调用。
-
-执行逻辑：
-- 后端会读取 Profile 对应的凭证与模型配置。
-- 发送固定测试消息：`This is a connectivity test. Reply with exactly: OK`。
-- 成功时返回 `available=true`、耗时 `latencyMs`、模型原始回复 `content`、`finishReason` 与 `usage`。
-- 失败时不会抛 500；仍返回成功外层结构，但 `data.available=false`，并在 `error` 中给出错误原因。
-
-前置条件：
-- Profile 必须存在且 `isActive=true`。
-- 绑定的凭证必须存在、已启用且 `baseUrl` 不为空。
+对 Profile 对应的供应商发起小型连通性请求。网络或模型错误不会使 HTTP 请求本身失败，而会在 data.available=false 和 data.error 中返回。
 
 ### 请求参数
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
-|profileId|path|string| 是 ||none|
+|profileId|path|integer| 是 ||LLM Profile ID。|
 
 > 返回示例
 
@@ -3792,29 +4868,21 @@ POST /agent/llm/profiles/{profileId}/test
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "profileId": 2,
-        "credentialId": 7,
-        "model": "gpt-5.4-mini",
-        "available": true,
-        "latencyMs": 1647.15,
-        "content": "OK",
-        "finishReason": "stop",
-        "usage": {
-            "completion_tokens": 15,
-            "total_tokens": 328,
-            "prompt_tokens": 313,
-            "prompt_tokens_details": {
-                "cached_tokens": 0
-            },
-            "completion_tokens_details": {
-                "reasoning_tokens": 8
-            }
-        },
-        "error": null
-    }
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
 }
 ```
 
@@ -3822,75 +4890,116 @@ POST /agent/llm/profiles/{profileId}/test
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
 
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» profileId|integer|true|none||Profile ID|
+|»» credentialId|integer|true|none||凭证 ID|
+|»» model|string|true|none||模型|
+|»» available|boolean|true|none||连通性是否成功|
+|»» latencyMs|number|true|none||耗时毫秒|
+|»» content|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||成功时的结构化验证文本|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» finishReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||模型结束原因|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» usage|any|false|none||none|
+|»» error|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||失败原因；连通性请求本身成功时也会放在 data 内|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
 # 设置/模型价格
 
-## POST 新增定价
+## POST 新增模型定价
 
 POST /agent/model-pricing
 
-创建一条模型定价记录。`credentialId` 不传或传 `null` 表示官方全局价；传入具体值表示该凭证的自定义价。**同一个 `(model, credentialId)` 组合不能重复。**
-
-### Request Body
-
-```json
-{
-  "model": "gpt-4o",
-  "inputPrice": 1.0,
-  "cachedInputPrice": 0.2,
-  "outputPrice": 5.0,
-  "multiplier": 1.0,
-  "credentialId": null
-}
-```
-
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `model` | string | ✅ | - | 模型名称，1-100 字符 |
-| `inputPrice` | float | ❌ | 1.0 | 非缓存输入价格（¥/百万 tokens），≥0 |
-| `cachedInputPrice` | float | ❌ | 0.1 | 缓存命中输入价格（¥/百万 tokens），≥0 |
-| `outputPrice` | float | ❌ | 3.0 | 输出价格（¥/百万 tokens），≥0 |
-| `multiplier` | float | ❌ | 1.0 | 倍率，≥0 |
-| `credentialId` | int / null | ❌ | null | `null` = 官方全局价；整数 = 用户凭证自定义价，需引用 `api_credentials` 表中存在的 id |
-
-### Response `200 OK`
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "pricingId": 1,
-    "model": "gpt-4o",
-    "inputPrice": 1.0,
-    "cachedInputPrice": 0.2,
-    "outputPrice": 5.0,
-    "multiplier": 1.0,
-    "credentialId": null,
-    "isActive": 1,
-    "createdAt": "2026-06-10T14:00:00",
-    "updatedAt": "2026-06-10T14:00:00"
-  }
-}
-```
-
-### Error `409 Conflict`
-
-当 `(model, credentialId)` 组合已存在时返回唯一约束冲突。
+新增官方通用价或绑定 credentialId 的用户自定义模型定价。费用单位由调用方与供应商计费口径保持一致。
 
 > Body 请求参数
 
 ```json
 {
-  "model": "gpt-4o",
-  "inputPrice": 1.0,
-  "cachedInputPrice": 0.2,
-  "outputPrice": 5.0,
-  "multiplier": 1.0,
-  "credentialId": null
+  "model": "string",
+  "inputPrice": 1,
+  "cachedInputPrice": 0.1,
+  "outputPrice": 3,
+  "multiplier": 1,
+  "credentialId": 1
 }
 ```
 
@@ -3898,327 +5007,769 @@ POST /agent/model-pricing
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
 |body|body|object| 是 ||none|
-|» model|body|string| 是 ||none|
-|» inputPrice|body|integer| 是 ||none|
-|» cachedInputPrice|body|number| 是 ||none|
-|» outputPrice|body|integer| 是 ||none|
-|» multiplier|body|integer| 是 ||none|
-|» credentialId|body|integer| 否 ||none|
+|» model|body|string| 是 ||模型标识|
+|» inputPrice|body|number| 否 ||普通输入单价，默认 1.0|
+|» cachedInputPrice|body|number| 否 ||缓存输入单价，默认 0.1|
+|» outputPrice|body|number| 否 ||输出单价，默认 3.0|
+|» multiplier|body|number| 否 ||价格乘数，默认 1.0|
+|» credentialId|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||专属凭证 ID；不传则官方/通用定价|
+|»» *anonymous*|body|null| 否 ||none|
 
 > 返回示例
 
 > 200 Response
 
 ```json
-{}
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "pricingId": 7,
+    "model": "gpt-5",
+    "inputPrice": 1.0,
+    "cachedInputPrice": 0.1,
+    "outputPrice": 3.0,
+    "multiplier": 1.0,
+    "credentialId": null,
+    "isActive": 1,
+    "createdAt": "2026-08-16T15:00:00",
+    "updatedAt": "2026-08-16T15:00:00"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
 ```
 
 ### 返回结果
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
 
-## GET 查询定价列表
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» pricingId|integer|true|none||定价记录 ID|
+|»» model|string|true|none||模型标识|
+|»» inputPrice|number|true|none||普通输入单价，非负|
+|»» cachedInputPrice|number|true|none||缓存输入单价，非负|
+|»» outputPrice|number|true|none||输出单价，非负|
+|»» multiplier|number|true|none||价格乘数，非负|
+|»» credentialId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||专属凭证 ID；null 为官方/通用定价|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isActive|integer|true|none||启用状态：1 启用、0 停用|
+|»» createdAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 创建时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» updatedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 更新时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|isActive|0|
+|isActive|1|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询模型定价列表
 
 GET /agent/model-pricing
 
-支持按 `model`、`credentialId`、`isActive` 筛选。
-
-### Query Parameters
-
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `model` | string | ❌ | - | 模型名模糊搜索（LIKE %xxx%） |
-| `credentialId` | int | ❌ | - | 按凭证筛选，不传返回全部 |
-| `isActive` | int | ❌ | - | 1=启用，0=禁用，不传返回全部 |
-
-### 示例请求
-
-```http
-GET /agent/model-pricing?model=deepseek&isActive=1
-```
-
-### Response `200 OK`
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "total": 3,
-    "items": [
-      {
-        "pricingId": 1,
-        "model": "deepseek-v4-flash",
-        "inputPrice": 1.0,
-        "cachedInputPrice": 0.02,
-        "outputPrice": 2.0,
-        "multiplier": 1.0,
-        "credentialId": null,
-        "isActive": 1,
-        "createdAt": "2026-06-10T14:00:00",
-        "updatedAt": "2026-06-10T14:00:00"
-      },
-      {
-        "pricingId": 2,
-        "model": "deepseek-v4-pro",
-        "inputPrice": 3.0,
-        "cachedInputPrice": 0.025,
-        "outputPrice": 6.0,
-        "multiplier": 1.0,
-        "credentialId": null,
-        "isActive": 1,
-        "createdAt": "2026-06-10T14:00:00",
-        "updatedAt": "2026-06-10T14:00:00"
-      },
-      {
-        "pricingId": 10,
-        "model": "deepseek-chat",
-        "inputPrice": 1.0,
-        "cachedInputPrice": 0.02,
-        "outputPrice": 2.0,
-        "multiplier": 1.0,
-        "credentialId": null,
-        "isActive": 1,
-        "createdAt": "2026-06-10T14:00:00",
-        "updatedAt": "2026-06-10T14:00:00"
-      }
-    ]
-  }
-}
-```
-
-结果按 `credentialId NULLS LAST` + `model 升序` 排列，即官方全局价排在前面，用户自定义价排在后面。
+查询模型定价，可按 model、credentialId 与 isActive 筛选；返回 ListResponse。
 
 ### 请求参数
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
-|model|query|string| 否 ||none|
-|isActive|query|string| 否 ||none|
+|model|query|string| 否 ||按模型标识过滤。|
+|credentialId|query|integer| 否 ||按专属凭证 ID 过滤。|
+|isActive|query|integer| 否 ||按启用状态过滤：0 或 1。|
 
 > 返回示例
 
 > 200 Response
 
 ```json
-{}
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
 ```
 
 ### 返回结果
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
 
-## GET 获取单条定价
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» pricingId|integer|true|none||定价记录 ID|
+|»»» model|string|true|none||模型标识|
+|»»» inputPrice|number|true|none||普通输入单价，非负|
+|»»» cachedInputPrice|number|true|none||缓存输入单价，非负|
+|»»» outputPrice|number|true|none||输出单价，非负|
+|»»» multiplier|number|true|none||价格乘数，非负|
+|»»» credentialId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|integer|false|none||专属凭证 ID；null 为官方/通用定价|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» isActive|integer|true|none||启用状态：1 启用、0 停用|
+|»»» createdAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||ISO 8601 创建时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» updatedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||ISO 8601 更新时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|isActive|0|
+|isActive|1|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询单条模型定价
 
 GET /agent/model-pricing/{pricingId}
 
-### Path Parameters
-
-| 参数 | 类型 | 说明 |
-|---|---|---|
-| `pricingId` | int | 定价记录 ID |
-
-### Response `200 OK`
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "pricingId": 1,
-    "model": "deepseek-v4-flash",
-    "inputPrice": 1.0,
-    "cachedInputPrice": 0.02,
-    "outputPrice": 2.0,
-    "multiplier": 1.0,
-    "credentialId": null,
-    "isActive": 1,
-    "createdAt": "2026-06-10T14:00:00",
-    "updatedAt": "2026-06-10T14:00:00"
-  }
-}
-```
-
-### Error `400 Bad Request`
-
-```json
-{
-  "code": 400,
-  "message": "不存在 id 为 999 的定价记录",
-  "data": null
-}
-```
+查询单条模型定价。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
 
 ### 请求参数
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
-|pricingId|path|string| 是 ||none|
+|pricingId|path|integer| 是 ||模型定价记录 ID。|
 
 > 返回示例
 
 > 200 Response
 
 ```json
-{}
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
 ```
 
 ### 返回结果
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
 
-## PUT 更新定价
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» pricingId|integer|true|none||定价记录 ID|
+|»» model|string|true|none||模型标识|
+|»» inputPrice|number|true|none||普通输入单价，非负|
+|»» cachedInputPrice|number|true|none||缓存输入单价，非负|
+|»» outputPrice|number|true|none||输出单价，非负|
+|»» multiplier|number|true|none||价格乘数，非负|
+|»» credentialId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||专属凭证 ID；null 为官方/通用定价|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isActive|integer|true|none||启用状态：1 启用、0 停用|
+|»» createdAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 创建时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» updatedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 更新时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|isActive|0|
+|isActive|1|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## PUT 更新模型定价
 
 PUT /agent/model-pricing/{pricingId}
 
-部分更新，只传需要修改的字段即可。
+仅提交需要修改的字段。记录不存在时返回业务失败。
 
-### Path Parameters
-
-| 参数 | 类型 | 说明 |
-|---|---|---|
-| `pricingId` | int | 定价记录 ID |
-
-### Request Body
+> Body 请求参数
 
 ```json
 {
-  "inputPrice": 2.0,
-  "cachedInputPrice": 0.5
+  "model": "string",
+  "inputPrice": 0,
+  "cachedInputPrice": 0,
+  "outputPrice": 0,
+  "multiplier": 0,
+  "credentialId": 1,
+  "isActive": 0
 }
 ```
 
-所有字段均为可选：
+### 请求参数
 
-| 参数 | 类型 | 说明 |
-|---|---|---|
-| `model` | string | 模型名称 |
-| `inputPrice` | float | 非缓存输入价格，≥0 |
-| `cachedInputPrice` | float | 缓存命中输入价格，≥0 |
-| `outputPrice` | float | 输出价格，≥0 |
-| `multiplier` | float | 倍率，≥0 |
-| `credentialId` | int / null | 传 `0` 或 `null` 都不更新该字段；传具体值更新 |
-| `isActive` | int | 0=禁用，1=启用 |
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|pricingId|path|integer| 是 ||模型定价记录 ID。|
+|body|body|object| 是 ||none|
+|» model|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||模型标识|
+|»» *anonymous*|body|null| 否 ||none|
+|» inputPrice|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||普通输入单价|
+|»» *anonymous*|body|null| 否 ||none|
+|» cachedInputPrice|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||缓存输入单价|
+|»» *anonymous*|body|null| 否 ||none|
+|» outputPrice|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||输出单价|
+|»» *anonymous*|body|null| 否 ||none|
+|» multiplier|body|any| 否 ||none|
+|»» *anonymous*|body|number| 否 ||价格乘数|
+|»» *anonymous*|body|null| 否 ||none|
+|» credentialId|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||专属凭证 ID|
+|»» *anonymous*|body|null| 否 ||none|
+|» isActive|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||启用状态：0 或 1|
+|»» *anonymous*|body|null| 否 ||none|
 
-### Response `200 OK`
+#### 枚举值
+
+|属性|值|
+|---|---|
+|»» *anonymous*|0|
+|»» *anonymous*|1|
+
+> 返回示例
+
+> 200 Response
 
 ```json
 {
-  "code": 200,
-  "message": "success",
+  "code": 1,
+  "msg": "success",
   "data": {
-    "pricingId": 1,
-    "model": "deepseek-v4-flash",
-    "inputPrice": 2.0,
-    "cachedInputPrice": 0.5,
-    "outputPrice": 2.0,
-    "multiplier": 1.0,
-    "credentialId": null,
-    "isActive": 1,
-    "createdAt": "2026-06-10T14:00:00",
-    "updatedAt": "2026-06-10T14:00:00"
+    "note": "请结合响应 JSON Schema 查看字段定义。"
   }
 }
 ```
 
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|pricingId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
+> 401 Response
 
 ```json
-{}
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
 ```
 
 ### 返回结果
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
 
-## DELETE 删除定价
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» pricingId|integer|true|none||定价记录 ID|
+|»» model|string|true|none||模型标识|
+|»» inputPrice|number|true|none||普通输入单价，非负|
+|»» cachedInputPrice|number|true|none||缓存输入单价，非负|
+|»» outputPrice|number|true|none||输出单价，非负|
+|»» multiplier|number|true|none||价格乘数，非负|
+|»» credentialId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||专属凭证 ID；null 为官方/通用定价|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isActive|integer|true|none||启用状态：1 启用、0 停用|
+|»» createdAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 创建时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» updatedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 更新时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|isActive|0|
+|isActive|1|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## DELETE 删除模型定价
 
 DELETE /agent/model-pricing/{pricingId}
 
-删除后该模型的价格将按优先级回退到官方全局价或代码默认值。
-
-### Path Parameters
-
-| 参数 | 类型 | 说明 |
-|---|---|---|
-| `pricingId` | int | 定价记录 ID |
-
-### Response `200 OK`
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": null
-}
-```
-
-### Error `400 Bad Request`
-
-```json
-{
-  "code": 400,
-  "message": "不存在 id 为 999 的定价记录",
-  "data": null
-}
-```
+删除模型定价记录。记录不存在时返回业务失败。
 
 ### 请求参数
 
 |名称|位置|类型|必选|中文名|说明|
 |---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
 |refreshToken|cookie|string| 否 ||none|
-|pricingId|path|string| 是 ||none|
+|pricingId|path|integer| 是 ||模型定价记录 ID。|
 
 > 返回示例
 
 > 200 Response
 
 ```json
-{}
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
 ```
 
 ### 返回结果
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» pricingId|integer|true|none||定价记录 ID|
+|»» model|string|true|none||模型标识|
+|»» inputPrice|number|true|none||普通输入单价，非负|
+|»» cachedInputPrice|number|true|none||缓存输入单价，非负|
+|»» outputPrice|number|true|none||输出单价，非负|
+|»» multiplier|number|true|none||价格乘数，非负|
+|»» credentialId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||专属凭证 ID；null 为官方/通用定价|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isActive|integer|true|none||启用状态：1 启用、0 停用|
+|»» createdAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 创建时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» updatedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 更新时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|isActive|0|
+|isActive|1|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
 
 # 进程管理
 
@@ -4359,7 +5910,7 @@ GET /process/{pid}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|pid|path|string| 是 ||none|
+|pid|path|integer| 是 ||目标进程的 PID，必须为大于 0 的整数。|
 
 > 返回示例
 
@@ -4764,6 +6315,8 @@ POST /process/log
 
 GET /terminal/available
 
+检查普通模式 WebSocket 终端依赖的运行环境。服务端会确认 Docker 已安装且普通终端容器正在运行；只有检查成功时才返回可用状态。该接口不创建终端会话。失败时返回业务错误，例如 Docker 不可用或指定容器未运行。
+
 ### 请求参数
 
 |名称|位置|类型|必选|中文名|说明|
@@ -4773,15 +6326,16 @@ GET /terminal/available
 
 > 返回示例
 
-```json
-{"code":0,"msg":"当前服务器未安装 Docker，普通终端功能不可用","data":null}
-```
+> 200 Response
 
 ```json
 {
-    "code": 0,
-    "msg": "当前服务器未安装 Docker，普通终端功能不可用",
-    "data": null
+  "code": 0,
+  "msg": "string",
+  "data": {
+    "normalTerminalAvailable": true,
+    "normalContainerName": "string"
+  }
 }
 ```
 
@@ -4789,13 +6343,25 @@ GET /terminal/available
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|普通终端环境可用时的统一响应。|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码|
+|» msg|string|true|none||提示信息|
+|» data|object|true|none||终端环境信息|
+|»» normalTerminalAvailable|boolean|true|none||普通终端是否可用|
+|»» normalContainerName|string|true|none||承载普通终端的 Docker 容器名称|
 
 ## POST 查询终端会话日志
 
 POST /terminal/session/log
+
+分页查询已结束或已记录的终端会话审计日志。请求体继承 PageSearchRequest，`page` 与 `pageSize` 均为非负整数。响应 data 为 `{ total, items }`；每条日志记录会话 ID、面板用户、客户端 IP、普通/管理员模式、管理员认证结果、开始与结束时间、关闭原因及子进程退出码。该接口只读取持久化日志，不会影响正在运行的终端会话。
 
 > Body 请求参数
 
@@ -5131,7 +6697,7 @@ GET /docker/container/{containerId}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|containerId|path|string| 是 ||none|
+|containerId|path|string| 是 ||目标 Docker 容器的 ID 或名称。|
 
 > 返回示例
 
@@ -5514,7 +7080,7 @@ DELETE /docker/container/{containerId}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|containerId|path|string| 是 ||none|
+|containerId|path|string| 是 ||需要删除的 Docker 容器 ID 或名称。|
 
 > 返回示例
 
@@ -5557,8 +7123,8 @@ GET /docker/container/{containerId}/logs
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|containerId|path|string| 是 ||none|
-|tailLines|query|integer| 否 ||默认200|
+|containerId|path|string| 是 ||目标 Docker 容器的 ID 或名称。|
+|tailLines|query|integer| 否 ||返回日志末尾的行数，默认 200，范围 1-5000。|
 
 > 返回示例
 
@@ -5596,7 +7162,7 @@ POST /docker/container/{containerId}/stop
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|containerId|path|string| 是 ||none|
+|containerId|path|string| 是 ||需要停止的 Docker 容器 ID 或名称。|
 
 > 返回示例
 
@@ -5643,7 +7209,7 @@ POST /docker/container/{containerId}/start
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|containerId|path|string| 是 ||none|
+|containerId|path|string| 是 ||需要启动的 Docker 容器 ID 或名称。|
 
 > 返回示例
 
@@ -5690,7 +7256,7 @@ POST /docker/container/{containerId}/restart
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|containerId|path|string| 是 ||none|
+|containerId|path|string| 是 ||需要重启的 Docker 容器 ID 或名称。|
 
 > 返回示例
 
@@ -5737,10 +7303,10 @@ POST /docker/image/pull
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|imageName|query|string| 是 ||none|
-|tag|query|string| 否 ||none|
-|platform|query|string| 否 ||none|
-|registry|query|string| 否 ||none|
+|imageName|query|string| 是 ||待拉取的镜像名称，例如 nginx。|
+|tag|query|string| 否 ||镜像标签，默认 latest。|
+|platform|query|string| 否 ||目标镜像平台，可选，例如 linux/amd64。|
+|registry|query|string| 否 ||可选的自定义镜像仓库地址。|
 
 > 返回示例
 
@@ -5778,8 +7344,13 @@ POST /docker/container
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|imageName|query|string| 否 ||none|
-|containerName|query|string| 否 ||none|
+|imageName|query|string| 是 ||用于创建容器的镜像名称。|
+|containerName|query|string| 是 ||新容器名称。|
+|ports|query|string| 否 ||端口映射 JSON 字符串，例如 {"8080":"80"}。|
+|envVars|query|string| 否 ||环境变量 JSON 字符串，例如 {"APP_ENV":"prod"}。|
+|volumes|query|string| 否 ||卷挂载 JSON 字符串，例如 {"/host/data":"/app/data"}。|
+|platform|query|string| 否 ||可选的目标平台，例如 linux/amd64。|
+|restartPolicy|query|string| 否 ||可选的 Docker 重启策略，例如 always 或 unless-stopped。|
 
 > 返回示例
 
@@ -5823,8 +7394,8 @@ GET /docker/search
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|q|query|string| 否 ||none|
-|limit|query|string| 否 ||none|
+|q|query|string| 是 ||Docker 镜像搜索关键词。|
+|limit|query|integer| 否 ||最多返回的镜像数量，默认 25，范围 1-100。|
 
 > 返回示例
 
@@ -6089,7 +7660,7 @@ POST /docker/mirror
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|mirrors|query|string| 否 ||none|
+|mirrors|query|string| 是 ||镜像加速站 URL 数组的 JSON 字符串，例如 ["https://docker.m.daocloud.cn"]。|
 
 > 返回示例
 
@@ -6129,7 +7700,7 @@ GET /database/install/{databaseType}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|databaseType|path|string| 是 ||none|
+|databaseType|path|string| 是 ||待检查的数据库类型。当前数据库管理接口主要使用 `mysql`。|
 
 > 返回示例
 
@@ -6167,7 +7738,7 @@ GET /database/status/{databaseType}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|databaseType|path|string| 是 ||none|
+|databaseType|path|string| 是 ||待查询运行状态的数据库类型。当前数据库管理接口主要使用 `mysql`。|
 
 > 返回示例
 
@@ -6393,11 +7964,13 @@ GET /database/mysql/databases
 
 # nginx
 
+<a id="opIdgetInstallInfo_nginx_install_get"></a>
+
 ## GET 查询 Nginx 安装信息
 
 GET /nginx/install
 
-查询 Nginx 是否已安装以及安装相关信息。成功时返回底层工具检测结果；若系统缺少 Nginx 或读取失败，会返回业务错误。
+读取 Nginx 是否安装、版本和主配置路径。需要 accessToken Cookie；未安装时仍返回成功包装但 data.isInstalled=false。底层命令失败会返回 code=0。
 
 ### 请求参数
 
@@ -6412,13 +7985,39 @@ GET /nginx/install
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "isInstalled": true,
-        "version": "1.28.3",
-        "configPath": "/etc/nginx/nginx.conf"
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "isInstalled": true,
+    "version": "1.28.3",
+    "configPath": "/etc/nginx/nginx.conf"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6427,14 +8026,74 @@ GET /nginx/install
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» isInstalled|boolean|false|none||none|
+|»» version|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» configPath|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetStatus_nginx_status_get"></a>
 
 ## GET 查询 Nginx 运行状态
 
 GET /nginx/status
 
-查询 Nginx 当前运行状态。成功时返回服务状态相关信息；若 Nginx 未安装、服务不可用或读取失败，会返回业务错误。
+读取 Nginx active 状态、worker 进程数和可选 stub_status 指标。需要 accessToken Cookie；Nginx 未安装/服务不可用时返回业务错误。
 
 ### 请求参数
 
@@ -6449,14 +8108,40 @@ GET /nginx/status
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "isRunning": true,
-        "workerProcessCount": 20,
-        "activeConnections": null,
-        "requestsPerSecond": null
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "isRunning": true,
+    "workerProcessCount": 4,
+    "activeConnections": 12,
+    "requestsPerSecond": null
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6465,14 +8150,75 @@ GET /nginx/status
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» isRunning|boolean|false|none||none|
+|»» workerProcessCount|integer|false|none||none|
+|»» activeConnections|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» requestsPerSecond|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|number|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdtestConfig_nginx_test_config_post"></a>
 
 ## POST 测试 Nginx 配置
 
 POST /nginx/test-config
 
-执行 Nginx 配置语法检查，相当于后端通过特权代理执行 `nginx -t`。该接口不会重载服务，只返回配置是否合法及底层检查输出，适合在保存站点配置前先做校验。
+通过特权代理执行 nginx -t，验证配置语法，不会 reload。需要 accessToken Cookie；返回 isValid、stdout、stderr，命令失败时返回业务错误。
 
 ### 请求参数
 
@@ -6487,13 +8233,39 @@ POST /nginx/test-config
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "isValid": true,
-        "stdout": "",
-        "stderr": "nginx: the configuration file /etc/nginx/nginx.conf syntax is ok\nnginx: configuration file /etc/nginx/nginx.conf test is successful"
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "isValid": true,
+    "stdout": "",
+    "stderr": "nginx: configuration file /etc/nginx/nginx.conf test is successful"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6502,14 +8274,45 @@ POST /nginx/test-config
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» isValid|boolean|false|none||none|
+|»» stdout|string|false|none||none|
+|»» stderr|string|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdreloadNginx_nginx_reload_post"></a>
 
 ## POST 重载 Nginx
 
 POST /nginx/reload
 
-重载 Nginx 配置，使新的配置生效。该接口会通过特权代理执行 reload，适合在配置已通过语法校验后调用。若当前配置错误或权限不足，会返回业务错误。
+通过特权代理执行 systemctl reload nginx。需要 accessToken Cookie；建议先调用 /nginx/test-config；成功返回服务名、动作和 isReloaded，权限/配置错误返回业务错误。
 
 ### 请求参数
 
@@ -6524,13 +8327,39 @@ POST /nginx/reload
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "serviceName": "nginx",
-        "action": "reload",
-        "isReloaded": true
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "serviceName": "nginx",
+    "action": "reload",
+    "isReloaded": true
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6539,14 +8368,51 @@ POST /nginx/reload
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» serviceName|string|false|none||none|
+|»» action|string|false|none||none|
+|»» isReloaded|boolean|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|action|reload|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdrestartNginx_nginx_restart_post"></a>
 
 ## POST 重启 Nginx
 
 POST /nginx/restart
 
-重启 Nginx 服务。与 reload 相比，重启会完整停止并重新启动服务，适用于需要彻底刷新状态的场景。调用失败时会返回业务错误。
+通过特权代理执行 systemctl restart nginx，并查询 is-active。需要 accessToken Cookie；成功返回 isRestarted 和 currentStatus，权限/服务错误返回业务错误。
 
 ### 请求参数
 
@@ -6561,14 +8427,40 @@ POST /nginx/restart
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "serviceName": "nginx",
-        "action": "restart",
-        "isRestarted": true,
-        "currentStatus": "active"
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "serviceName": "nginx",
+    "action": "restart",
+    "isRestarted": true,
+    "currentStatus": "active"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6577,14 +8469,52 @@ POST /nginx/restart
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## GET 获取站点列表
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» serviceName|string|false|none||none|
+|»» action|string|false|none||none|
+|»» isRestarted|boolean|false|none||none|
+|»» currentStatus|string|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|action|restart|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetSiteList_nginx_sites_get"></a>
+
+## GET 获取 Nginx 站点列表
 
 GET /nginx/sites
 
-获取当前 Nginx 站点列表。响应 `data` 为 `{ total, list }`，其中每一项来自底层站点扫描结果，适合站点管理页展示启用中的静态站点或反向代理站点。
+扫描 sites-enabled 或 conf.d，返回站点总数和配置摘要。需要 accessToken Cookie。每个站点包含配置文件名/路径、域名、listen、static/reverse_proxy/unknown 模式、rootPath、proxyPass、启用状态。
 
 ### 请求参数
 
@@ -6599,23 +8529,49 @@ GET /nginx/sites
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "total": 1,
-        "list": [
-            {
-                "configName": "example.com.conf",
-                "configPath": "/etc/nginx/sites-enabled/example.com.conf",
-                "domain": "example.com",
-                "listen": "80",
-                "mode": "static",
-                "rootPath": "/var/www/example.com",
-                "proxyPass": null,
-                "isEnabled": true
-            }
-        ]
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "list": [
+      {
+        "configName": "example.com.conf",
+        "configPath": "/etc/nginx/sites-enabled/example.com.conf",
+        "domain": "example.com",
+        "listen": "80",
+        "mode": "static",
+        "rootPath": "/var/www/example.com",
+        "proxyPass": null,
+        "isEnabled": true
+      }
+    ]
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6624,25 +8580,131 @@ GET /nginx/sites
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## POST 创建站点
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» total|integer|false|none||none|
+|»» list|[object]|false|none||none|
+|»»» configName|string|false|none||none|
+|»»» configPath|string|false|none||none|
+|»»» domain|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» listen|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» mode|string|false|none||none|
+|»»» rootPath|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» proxyPass|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» isEnabled|boolean|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdcreateSite_nginx_site_post"></a>
+
+## POST 创建 Nginx 站点
 
 POST /nginx/site
 
-创建新的 Nginx 站点。请求体包含 `domain`、`mode`、`listenPort`，以及根据模式选择的字段：`mode=static` 时必须提供 `rootPath`；`mode=reverse_proxy` 时必须提供 `proxyPass`，若同时提供 `proxyPort` 则后端会自动拼接成完整上游地址，协议由 `proxyProtocol` 控制。成功时会生成配置、写入站点文件并自动 reload Nginx。
+创建 static 或 reverse_proxy 站点并 reload。需要 accessToken Cookie。domain 必填；mode=static 时 rootPath 必填；mode=reverse_proxy 时 proxyPass 必填，可用 proxyProtocol+proxyPort 拼出上游地址；listenPort 1..65535 默认 80。
 
 > Body 请求参数
 
 ```json
 {
-  "domain": "example.com",
+  "domain": "string",
   "mode": "static",
   "listenPort": 80,
-  "rootPath": "/var/www/example.com",
-  "proxyPass": null,
-  "proxyPort": null,
+  "rootPath": "string",
+  "proxyPass": "string",
+  "proxyPort": 1,
   "proxyProtocol": "http"
 }
 ```
@@ -6656,11 +8718,26 @@ POST /nginx/site
 |body|body|object| 是 ||none|
 |» domain|body|string| 是 ||none|
 |» mode|body|string| 是 ||none|
-|» listenPort|body|integer| 是 ||none|
-|» rootPath|body|string| 是 ||none|
-|» proxyPass|body|null| 是 ||none|
-|» proxyPort|body|null| 是 ||none|
-|» proxyProtocol|body|string| 是 ||none|
+|» listenPort|body|integer| 否 ||none|
+|» rootPath|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+|» proxyPass|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+|» proxyPort|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+|» proxyProtocol|body|string| 否 ||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|» mode|static|
+|» mode|reverse_proxy|
+|» proxyProtocol|http|
+|» proxyProtocol|https|
 
 > 返回示例
 
@@ -6668,19 +8745,45 @@ POST /nginx/site
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "domain": "example.com",
-        "mode": "static",
-        "listenPort": 80,
-        "configPath": "/etc/nginx/sites-available/example.com.conf",
-        "enabledPath": "/etc/nginx/sites-available/example.com.conf",
-        "rootPath": "/var/www/example.com",
-        "proxyPass": null,
-        "isEnabled": true,
-        "isReloaded": true
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "domain": "example.com",
+    "mode": "static",
+    "listenPort": 80,
+    "configPath": "/etc/nginx/sites-available/example.com.conf",
+    "enabledPath": "/etc/nginx/sites-enabled/example.com.conf",
+    "rootPath": "/var/www/example.com",
+    "proxyPass": null,
+    "isEnabled": true,
+    "isReloaded": true
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6689,14 +8792,109 @@ POST /nginx/site
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## DELETE 删除站点
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» domain|string|false|none||none|
+|»» mode|string|false|none||none|
+|»» listenPort|integer|false|none||none|
+|»» configPath|string|false|none||none|
+|»» enabledPath|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» rootPath|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» proxyPass|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isEnabled|boolean|false|none||none|
+|»» isReloaded|boolean|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|static|
+|mode|reverse_proxy|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIddeleteSite_nginx_site_configName_delete"></a>
+
+## DELETE 删除 Nginx 站点
 
 DELETE /nginx/site/{configName}
 
-删除指定站点配置。路径参数 `configName` 用于定位站点配置文件，服务端会通过特权代理删除配置并完成 reload。成功时返回被删除的配置路径及删除结果。
+删除指定站点配置并 reload。需要 accessToken Cookie。configName 为配置文件名（如 example.com.conf），不存在或特权代理失败时返回业务错误；删除不可恢复，请确认目标。
 
 ### 请求参数
 
@@ -6704,7 +8902,7 @@ DELETE /nginx/site/{configName}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|configName|path|string| 是 ||none|
+|configName|path|string| 是 ||配置文件名，不应包含路径|
 
 > 返回示例
 
@@ -6712,14 +8910,40 @@ DELETE /nginx/site/{configName}
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "configName": "example.com.conf",
-        "configPath": "/etc/nginx/sites-available/example.com.conf",
-        "isDeleted": true,
-        "isReloaded": true
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "configName": "example.com.conf",
+    "configPath": "/etc/nginx/sites-available/example.com.conf",
+    "isDeleted": true,
+    "isReloaded": true
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6728,21 +8952,53 @@ DELETE /nginx/site/{configName}
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## POST 申请 SSL 证书
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» configName|string|false|none||none|
+|»» configPath|string|false|none||none|
+|»» isDeleted|boolean|false|none||none|
+|»» isReloaded|boolean|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdapplySsl_nginx_ssl_apply_post"></a>
+
+## POST 申请 Nginx SSL 证书
 
 POST /nginx/ssl/apply
 
-为指定域名申请 SSL 证书。请求体包含 `domain` 和 `email`。服务端会先读取现有站点配置并解析 `webroot`，再通过特权代理执行证书申请流程。成功时返回证书申请结果；若站点配置缺失、解析失败或证书申请失败，会返回业务错误。
+为已有站点申请 Let’s Encrypt 证书。需要 accessToken Cookie。服务端从站点配置推断 webroot，再经特权代理运行 certbot；domain/email 必填。certbot 未安装、LoongArch 不支持或 ACME 校验失败时返回业务错误。
 
 > Body 请求参数
 
 ```json
 {
-  "domain": "example.com",
-  "email": "admin@example.com"
+  "domain": "string",
+  "email": "user@example.com"
 }
 ```
 
@@ -6753,8 +9009,8 @@ POST /nginx/ssl/apply
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
 |body|body|object| 是 ||none|
-|» domain|body|string| 是 ||none|
-|» email|body|string| 是 ||none|
+|» domain|body|string| 否 ||none|
+|» email|body|string(email)| 否 ||none|
 
 > 返回示例
 
@@ -6762,9 +9018,41 @@ POST /nginx/ssl/apply
 
 ```json
 {
-    "code": 0,
-    "msg": "申请 SSL 证书失败",
-    "data": null
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "domain": "example.com",
+    "webroot": "/var/www/example.com",
+    "certPath": "/etc/letsencrypt/live/example.com/fullchain.pem",
+    "keyPath": "/etc/letsencrypt/live/example.com/privkey.pem",
+    "isApplied": true
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
 }
 ```
 
@@ -6773,22 +9061,106 @@ POST /nginx/ssl/apply
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## POST 配置 SSL
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» domain|string|false|none||none|
+|»» webroot|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» certPath|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» keyPath|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» isApplied|boolean|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdconfigSsl_nginx_ssl_config_post"></a>
+
+## POST 配置 Nginx SSL
 
 POST /nginx/ssl/config
 
-为指定域名写入 HTTPS/SSL 配置。请求体包含 `domain`、`certPath`、`keyPath`。服务端会基于现有站点配置生成包含证书路径的 HTTPS 配置，并通过特权代理保存与应用。适用于证书已存在、只需要挂载到站点的场景。
+将已有证书挂载到指定站点，生成 HTTPS 配置并测试/reload。需要 accessToken Cookie。domain、certPath、keyPath 必填且文件必须存在；配置测试或权限失败返回业务错误。
 
 > Body 请求参数
 
 ```json
 {
-  "domain": "example.com",
-  "certPath": "/etc/letsencrypt/live/example.com/fullchain.pem",
-  "keyPath": "/etc/letsencrypt/live/example.com/privkey.pem"
+  "domain": "string",
+  "certPath": "string",
+  "keyPath": "string"
 }
 ```
 
@@ -6808,7 +9180,44 @@ POST /nginx/ssl/config
 > 200 Response
 
 ```json
-{}
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "domain": "example.com",
+    "configPath": "/etc/nginx/sites-enabled/example.com.conf",
+    "certPath": "/etc/letsencrypt/live/example.com/fullchain.pem",
+    "keyPath": "/etc/letsencrypt/live/example.com/privkey.pem",
+    "isSslConfigured": true,
+    "isReloaded": true
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
 ```
 
 ### 返回结果
@@ -6816,20 +9225,54 @@ POST /nginx/ssl/config
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## POST 续期 SSL 证书
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» domain|string|false|none||none|
+|»» configPath|string|false|none||none|
+|»» certPath|string|false|none||none|
+|»» keyPath|string|false|none||none|
+|»» isSslConfigured|boolean|false|none||none|
+|»» isReloaded|boolean|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdrenewSsl_nginx_ssl_renew_post"></a>
+
+## POST 续期 Nginx SSL 证书
 
 POST /nginx/ssl/renew
 
-为指定域名续期 SSL 证书。请求体包含 `domain`。服务端会通过特权代理执行续期流程，成功时返回续期结果。
+续期指定域名的 certbot 证书，并执行 nginx -t 和 reload。需要 accessToken Cookie。domain 必填；certbot 不可用、续期失败或配置校验失败返回业务错误。
 
 > Body 请求参数
 
 ```json
 {
-  "domain": "example.com"
+  "domain": "string"
 }
 ```
 
@@ -6847,52 +9290,40 @@ POST /nginx/ssl/renew
 > 200 Response
 
 ```json
-{}
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "domain": "example.com",
+    "isRenewed": true,
+    "isReloaded": true
+  }
+}
 ```
 
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## GET 读取站点配置
-
-GET /nginx/site/{domain}
-
-读取指定域名站点的配置。路径参数 `domain` 用于定位站点配置文件，成功时返回配置原文及解析后的结构化字段，供前端编辑器或详情页展示。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|domain|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
+> 401 Response
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "domain": "example.com",
-        "configPath": "/etc/nginx/sites-enabled/example.com.conf",
-        "content": "server {\n    listen 80;\n    server_name example.com;\n    root /var/www/example.com;\n    index index.html;\n    location / {\n        try_files $uri $uri/ =404;\n    }\n}",
-        "parsed": {
-            "serverName": "example.com",
-            "listen": "80",
-            "root": "/var/www/example.com",
-            "proxyPass": null,
-            "sslCertPath": null,
-            "sslKeyPath": null
-        }
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6901,6 +9332,8 @@ GET /nginx/site/{domain}
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
@@ -6908,31 +9341,249 @@ GET /nginx/site/{domain}
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» domain|string|false|none||none|
+|»» isRenewed|boolean|false|none||none|
+|»» isReloaded|boolean|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetSiteConfig_nginx_site_domain_get"></a>
+
+## GET 读取站点配置
+
+GET /nginx/site/{domain}
+
+读取指定域名的 Nginx 配置原文和解析字段。需要 accessToken Cookie。domain 必须是域名或站点名；找不到配置时返回业务错误。解析字段包括 serverName、listen、root、proxyPass、sslCertPath、sslKeyPath。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|domain|path|string| 是 ||域名/站点名|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "domain": "example.com",
+    "configPath": "/etc/nginx/sites-enabled/example.com.conf",
+    "content": "server {\n    listen 80;\n    server_name example.com;\n}",
+    "parsed": {
+      "serverName": "example.com",
+      "listen": "80",
+      "root": null,
+      "proxyPass": null,
+      "sslCertPath": null,
+      "sslKeyPath": null
+    }
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
 |» data|object|true|none||none|
 |»» domain|string|true|none||none|
 |»» configPath|string|true|none||none|
 |»» content|string|true|none||none|
 |»» parsed|object|true|none||none|
-|»»» serverName|string|true|none||none|
-|»»» listen|string|true|none||none|
-|»»» root|string|true|none||none|
-|»»» proxyPass|null|true|none||none|
-|»»» sslCertPath|null|true|none||none|
-|»»» sslKeyPath|null|true|none||none|
+|»»» serverName|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» listen|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» root|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» proxyPass|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» sslCertPath|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» sslKeyPath|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdupdateSiteConfig_nginx_site_domain_put"></a>
 
 ## PUT 上传并应用站点配置
 
 PUT /nginx/site/{domain}
 
-原子化更新指定域名的 Nginx 站点配置。路径参数 `domain` 指定目标站点，请求体中的 `content` 必须是完整配置原文。服务端会执行“写入临时内容 -> `nginx -t` 校验 -> 失败回滚 / 成功保存并 reload”流程，因此比普通文本覆盖更安全。成功时返回站点配置保存结果。
+原子化替换指定站点的完整 server block：备份旧文件→写入→nginx -t→失败回滚，成功后 reload。需要 accessToken Cookie。content 非空且应包含完整合法配置；语法错误、站点不存在或权限不足返回业务错误。
 
 > Body 请求参数
 
 ```json
 {
-  "content": "server {\n    listen 80;\n    server_name example.com;\n    root /var/www/example.com;\n    index index.html;\n    location / {\n        try_files $uri $uri/ =404;\n    }\n}"
+  "content": "string"
 }
 ```
 
@@ -6942,9 +9593,9 @@ PUT /nginx/site/{domain}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|domain|path|string| 是 ||none|
+|domain|path|string| 是 ||域名/站点名|
 |body|body|object| 是 ||none|
-|» content|body|string| 是 ||none|
+|» content|body|string| 否 ||完整 Nginx server block 原文|
 
 > 返回示例
 
@@ -6952,13 +9603,39 @@ PUT /nginx/site/{domain}
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "targetPath": "/etc/nginx/sites-enabled/example.com.conf",
-        "isSaved": true,
-        "isReloaded": true
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "targetPath": "/etc/nginx/sites-enabled/example.com.conf",
+    "isSaved": true,
+    "isReloaded": true
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -6967,8 +9644,37 @@ PUT /nginx/site/{domain}
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» targetPath|string|false|none||none|
+|»» isSaved|boolean|false|none||none|
+|»» isReloaded|boolean|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
 
 # agent
 
@@ -6976,180 +9682,8232 @@ PUT /nginx/site/{domain}
 
 POST /agent/sessions
 
- 请求体 AgentSessionCreate 
-
- 参数         类型   必填 默认值          说明
- ──────────── ────── ──── ─────────────── ──────────────────────────────────────
- title        string 否   "新 Agent 会话" 会话标题，1-100 字符
- mode         string 否   "agent"         运行模式（见下方）
- profileId    int    否   null            LLM Profile ID，不传则使用默认 Profile
- toolSource   string 否   "current_mcp"   工具来源模式："current_mcp" 或 "stdio"
- safetyPolicy string 否   "default"       安全策略（见下方）
- mcpServers   array  否   null            仅 toolSource="stdio" 时有效
-
- ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
- mode — 四种运行模式 
-
- 值            名称       行为
- ───────────── ────────── ───────────────────────────────────────────────────────
- "agent"       标准 Agent 默认。低风险自动执行，中高风险需用户审批
- "read_only"   只读       只能使用风险等级 read_only 的工具，禁写
- "plan"        计划       可查询诊断，生成执行方案但不执行，等待用户批准
- "break_glass" 紧急       跳过审批降级，所有操作强制审计日志，回复标明 [紧急模式]
-
- ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
- toolSource — 工具来源（两种） 
-
- "current_mcp"（默认） 
-
-加载项目内置工具集，共 53 个工具，涵盖：
-
- · 系统观测：CPU、内存、磁盘、网络、进程、Docker、Nginx、systemd
- · 文件操作：读写、搜索、替换、补丁
- · Git/项目：状态、diff、变更文件、项目命令检测
- · 命令执行：argv 风格命令、shell 命令
- · 安全相关：防火墙端口管理（通过特权 Agent）
-
-不接收  mcpServers  参数。如果传了会拒绝。
-
- "stdio" 
-
-加载外部 stdio MCP 服务端的工具集。
-
-mcpServers 自动发现规则：
-
- 1. 如果请求中显式传了  mcpServers  → 使用前端传入的
- 2. 如果没传 → 自动从  pyproject.toml  读取  [tool.ndlmpanel-agent.mcp-servers] 
-
-项目内置了两个预配置的 MCP 服务端：
-
- server 名      入口                          工具集
- ────────────── ───────────────────────────── ───────────────────────────────────────────
- ndlmpanel-mcp  python -m ndlmpanel_agent.mcp 系统观测、Docker、Nginx、防火墙等 ops 工具
- agent-core-mcp python -m agent.agent_mcp     文件读写编辑、搜索、Git、命令执行等编码工具
-
-如果前端显式传  mcpServers ，格式如下：
-
- McpServerSpec  每项：
-
- 字段    类型     必填 说明
- ─────── ──────── ──── ────────────────────────────────────────────
- name    string   是   唯一标识名，冲突时报错
- command string[] 是   argv 格式命令，如 ["python", "-m", "my_mcp"]
- cwd     string   否   工作目录
-
-校验规则：
-
- ·  stdio  + 空  mcpServers  → 拒绝
- · 两个 server 暴露同名工具 → 拒绝（报错含冲突名 + server 名）
-
- ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
- safetyPolicy — 安全策略 
-
-值      : "default"
-名称    : 默认
-行为差异: 平衡安全与可用性。拦截 rm -rf / / dd of=/dev / fork 炸弹等危险命令；写操作需审批
-
-值      : "strict"
-名称    : 严格
-行为差异: 用于生产/高风险环境。阈值更严：safe ≤ 10（默认是 20），拦截 rm -rf（所有路径）、shutdown、chmod 777、chown root 等；require_approval 为 "all_write"（所有
-          写操作需审批）
-
-两种策略均有的保护：
-
- · 受保护路径（ /etc/shadow 、 /boot 、 /proc 、 /sys  等）不可写
- · 危险模式匹配（ curl \| bash 、 sudo su  等）直接拦截
- · 输出长度上限控制
-
- ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
- profileId — LLM Profile 
-
-不传则自动使用默认 Profile。可通过以下接口管理：
-
- ·  GET /agent/llm/profiles  — 查看所有 Profile
- ·  GET /agent/llm/profiles/default  — 查看当前默认
- ·  PUT /agent/llm/profiles/{profileId}/default  — 设置默认
-
-每个 Profile 包含：提供商（DeepSeek/Qwen/OpenAI Compatible）、模型名、maxTokens、temperature、重试策略等。
-
- ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
- 完整示例 
-
-最简 — current_mcp + 默认 Profile：
-
- json
- POST /agent/sessions 
- {} 
-
-最简 — stdio + 自动发现（推荐）：
-
- json
- POST /agent/sessions 
- { 
-   "toolSource": "stdio" 
- } 
-
-完整参数：
-
- json
- POST /agent/sessions 
- { 
-   "title": "生产环境巡检", 
-   "mode": "read_only", 
-   "profileId": 2, 
-   "toolSource": "current_mcp", 
-   "safetyPolicy": "strict" 
- } 
-
-自定义 stdio server：
-
- json
- POST /agent/sessions 
- { 
-   "title": "自定义 MCP", 
-   "toolSource": "stdio", 
-   "mcpServers": [ 
-     { 
-       "name": "my-tools", 
-       "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"] 
-     } 
-   ] 
- } 
-
- ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
- 响应 AgentSessionResponse 
-
- 字段         类型      说明
- ──────────── ───────── ─────────────────────────────────────────────────
- sessionId    string    会话 ID，WebSocket 连接用
- title        string    会话标题
- mode         string    运行模式
- status       string    "idle" / "running" / "waiting_approval" / "error"
- profileId    int?      使用的 LLM Profile ID
- toolSource   string    实际生效的工具来源
- safetyPolicy string    安全策略
- mcpServers   array?    如果是 stdio 模式，列出实际运行的 server 配置
- summary      string?   会话摘要
- lastError    string?   最后一次错误信息
- createdAt    datetime  创建时间
- updatedAt    datetime  最后更新时间
- finishedAt   datetime? 完成时间
+创建 Agent 会话。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
 
 > Body 请求参数
 
 ```json
 {
+  "title": "新 Agent 会话",
+  "mode": "read_only",
+  "profileId": 1,
+  "toolSource": "current_mcp",
+  "safetyPolicy": "default",
+  "source": "manual",
+  "mcpServers": [
+    {
+      "name": "string",
+      "command": [
+        "string"
+      ],
+      "cwd": "string"
+    }
+  ]
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|body|body|object| 是 ||none|
+|» title|body|string| 否 ||会话标题，默认 新 Agent 会话|
+|» mode|body|string| 否 ||运行模式，默认 agent|
+|» profileId|body|any| 否 ||none|
+|»» *anonymous*|body|integer| 否 ||LLM Profile ID；不传使用默认|
+|»» *anonymous*|body|null| 否 ||none|
+|» toolSource|body|string| 否 ||工具来源|
+|» safetyPolicy|body|string| 否 ||安全策略，默认 default|
+|» source|body|string| 否 ||会话来源 manual / scheduled / inspection|
+|» mcpServers|body|any| 否 ||none|
+|»» *anonymous*|body|[object]| 否 ||none|
+|»»» name|body|string| 是 ||服务端唯一名称|
+|»»» command|body|[string]| 是 ||none|
+|»»» cwd|body|any| 否 ||none|
+|»»»» *anonymous*|body|string| 否 ||可选工作目录|
+|»»»» *anonymous*|body|null| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|» mode|read_only|
+|» mode|plan|
+|» mode|agent|
+|» mode|break_glass|
+|» toolSource|current_mcp|
+|» toolSource|stdio|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "sessionId": "sess_01JEXAMPLE",
     "title": "磁盘异常排查",
     "mode": "agent",
+    "status": "idle",
+    "source": "manual",
     "profileId": 2,
     "toolSource": "current_mcp",
-    "safetyPolicy": "default"
+    "safetyPolicy": "default",
+    "mcpServers": null,
+    "summary": null,
+    "lastError": null,
+    "createdAt": "2026-08-16T15:00:00",
+    "updatedAt": "2026-08-16T15:00:00",
+    "finishedAt": null
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话唯一 ID|
+|»» title|string|true|none||会话标题|
+|»» mode|string|true|none||运行模式：read_only、plan、agent 或 break_glass|
+|»» status|string|true|none||会话状态，例如 idle、running、waiting_approval、completed_unread 或 error|
+|»» source|string|true|none||会话来源：manual、scheduled 或 inspection|
+|»» profileId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||LLM Profile ID；null 表示使用默认 Profile|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» toolSource|string|true|none||工具来源|
+|»» safetyPolicy|string|true|none||安全策略|
+|»» mcpServers|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|[object]|false|none||none|
+|»»»» name|string|true|none||服务端唯一名称|
+|»»»» command|[string]|true|none||none|
+|»»»» cwd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|string|false|none||可选工作目录|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||最后错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|read_only|
+|mode|plan|
+|mode|agent|
+|mode|break_glass|
+|toolSource|current_mcp|
+|toolSource|stdio|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询 Agent 会话列表
+
+GET /agent/sessions
+
+查询 Agent 会话列表。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|page|query|integer| 否 ||页码，从 1 开始，默认 1。|
+|pageSize|query|integer| 否 ||每页数量，1 至 200，默认 20。|
+|status|query|string| 否 ||按会话状态筛选。|
+|keyword|query|string| 否 ||按关键词筛选。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "sessionId": "sess_01JEXAMPLE",
+        "title": "磁盘异常排查",
+        "mode": "agent",
+        "status": "idle",
+        "source": "manual",
+        "profileId": 2,
+        "toolSource": "current_mcp",
+        "safetyPolicy": "default",
+        "createdAt": "2026-08-16T15:00:00",
+        "updatedAt": "2026-08-16T15:00:00"
+      }
+    ]
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» sessionId|string|true|none||会话唯一 ID|
+|»»» title|string|true|none||会话标题|
+|»»» mode|string|true|none||运行模式：read_only、plan、agent 或 break_glass|
+|»»» status|string|true|none||会话状态，例如 idle、running、waiting_approval、completed_unread 或 error|
+|»»» source|string|true|none||会话来源：manual、scheduled 或 inspection|
+|»»» profileId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|integer|false|none||LLM Profile ID；null 表示使用默认 Profile|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» toolSource|string|true|none||工具来源|
+|»»» safetyPolicy|string|true|none||安全策略|
+|»»» mcpServers|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|[object]|false|none||none|
+|»»»»» name|string|true|none||服务端唯一名称|
+|»»»»» command|[string]|true|none||none|
+|»»»»» cwd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»»» *anonymous*|string|false|none||可选工作目录|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||最后错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|read_only|
+|mode|plan|
+|mode|agent|
+|mode|break_glass|
+|toolSource|current_mcp|
+|toolSource|stdio|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询单个 Agent 会话
+
+GET /agent/sessions/{sessionId}
+
+查询单个 Agent 会话。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话唯一 ID|
+|»» title|string|true|none||会话标题|
+|»» mode|string|true|none||运行模式：read_only、plan、agent 或 break_glass|
+|»» status|string|true|none||会话状态，例如 idle、running、waiting_approval、completed_unread 或 error|
+|»» source|string|true|none||会话来源：manual、scheduled 或 inspection|
+|»» profileId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||LLM Profile ID；null 表示使用默认 Profile|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» toolSource|string|true|none||工具来源|
+|»» safetyPolicy|string|true|none||安全策略|
+|»» mcpServers|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|[object]|false|none||none|
+|»»»» name|string|true|none||服务端唯一名称|
+|»»»» command|[string]|true|none||none|
+|»»»» cwd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|string|false|none||可选工作目录|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||最后错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|read_only|
+|mode|plan|
+|mode|agent|
+|mode|break_glass|
+|toolSource|current_mcp|
+|toolSource|stdio|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## DELETE 删除 Agent 会话
+
+DELETE /agent/sessions/{sessionId}
+
+删除 Agent 会话。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询会话消息历史
+
+GET /agent/sessions/{sessionId}/messages
+
+查询会话消息历史。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» messageId|integer|true|none||消息 ID|
+|»»» sessionId|string|true|none||所属会话 ID|
+|»»» role|string|true|none||消息角色，例如 user、assistant、tool 或 system|
+|»»» content|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||文本内容；仅含 tool_calls 的 assistant 消息可为 null|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» toolCallId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||工具调用 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» traceId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||关联 trace ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» roundIndex|integer|true|none||对话轮次|
+|»»» metadata|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||ISO 8601 时间|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询 Agent Trace 原始事件
+
+GET /agent/traces
+
+按可选 sessionId、traceId、eventType 查询原始 Trace 事件。当前实现只依赖登录拦截器，不额外按会话归属过滤，调用方应遵守权限边界。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|query|string| 否 ||按会话 ID 过滤。|
+|traceId|query|string| 否 ||按 Trace ID 过滤。|
+|eventType|query|string| 否 ||按事件类型过滤。|
+|limit|query|integer| 否 ||返回数量，1 至 1000，默认 100。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» id|integer|true|none||Trace 事件 ID|
+|»»» traceId|string|true|none||Trace ID|
+|»»» sessionId|string|true|none||会话 ID|
+|»»» eventType|string|true|none||事件类型|
+|»»» timestamp|number|true|none||Unix 时间戳|
+|»»» data|any|true|none||none|
+|»»» entryHash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||当前事件哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» prevHash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||前一事件哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||ISO 8601 入库时间|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询 Session Trace 时间线
+
+GET /agent/traces/{sessionId}/timeline
+
+按会话 ID 返回排序后的精简 Trace 时间线。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+|limit|query|integer| 否 ||时间线最大事件数，1 至 1000，默认 200。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» id|integer|true|none||Trace 事件 ID|
+|»»» traceId|string|true|none||Trace ID|
+|»»» sessionId|string|true|none||会话 ID|
+|»»» eventType|string|true|none||事件类型|
+|»»» stage|string|true|none||时间线阶段|
+|»»» timestamp|number|true|none||Unix 时间戳|
+|»»» data|any|true|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询 Session Trace 汇总
+
+GET /agent/traces/{sessionId}/summary
+
+返回会话 Trace 的事件数、工具调用数、审批数、注入标记和关联 Trace ID。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "sessionId": "sess_01JEXAMPLE",
+    "totalEvents": 12,
+    "toolCalls": 2,
+    "approvalCount": 0,
+    "hasInjection": false,
+    "traces": [
+      "trace_01"
+    ]
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话 ID|
+|»» totalEvents|integer|true|none||事件总数|
+|»» toolCalls|integer|true|none||工具调用数|
+|»» approvalCount|integer|true|none||审批请求数|
+|»» hasInjection|boolean|true|none||是否检测到注入相关事件|
+|»» traces|[string]|true|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## PUT 切换 Agent 工具来源
+
+PUT /agent/sessions/{sessionId}/tool-source
+
+切换会话运行时工具来源并使运行时缓存失效。使用 current_mcp 时不应提交 mcpServers；使用 stdio 时可提交外部 MCP 服务端配置。
+
+> Body 请求参数
+
+```json
+{
+  "toolSource": "current_mcp",
+  "mcpServers": [
+    {
+      "name": "string",
+      "command": [
+        "string"
+      ],
+      "cwd": "string"
+    }
+  ]
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+|body|body|object| 是 ||none|
+|» toolSource|body|string| 是 ||目标工具来源|
+|» mcpServers|body|any| 否 ||none|
+|»» *anonymous*|body|[object]| 否 ||仅 stdio 可用；未提供时保留已有配置|
+|»»» name|body|string| 是 ||服务端唯一名称|
+|»»» command|body|[string]| 是 ||none|
+|»»» cwd|body|any| 否 ||none|
+|»»»» *anonymous*|body|string| 否 ||可选工作目录|
+|»»»» *anonymous*|body|null| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|» toolSource|current_mcp|
+|» toolSource|stdio|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话唯一 ID|
+|»» title|string|true|none||会话标题|
+|»» mode|string|true|none||运行模式：read_only、plan、agent 或 break_glass|
+|»» status|string|true|none||会话状态，例如 idle、running、waiting_approval、completed_unread 或 error|
+|»» source|string|true|none||会话来源：manual、scheduled 或 inspection|
+|»» profileId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||LLM Profile ID；null 表示使用默认 Profile|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» toolSource|string|true|none||工具来源|
+|»» safetyPolicy|string|true|none||安全策略|
+|»» mcpServers|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|[object]|false|none||none|
+|»»»» name|string|true|none||服务端唯一名称|
+|»»»» command|[string]|true|none||none|
+|»»»» cwd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|string|false|none||可选工作目录|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||最后错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|read_only|
+|mode|plan|
+|mode|agent|
+|mode|break_glass|
+|toolSource|current_mcp|
+|toolSource|stdio|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## PUT 切换 Agent 模型
+
+PUT /agent/sessions/{sessionId}/switch-model
+
+将会话绑定到目标的已启用 LLM Profile，并使运行时缓存失效。Profile 不存在或未启用时为业务失败。
+
+> Body 请求参数
+
+```json
+{
+  "profileId": 1
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+|body|body|object| 是 ||none|
+|» profileId|body|integer| 是 ||目标可用 LLM Profile ID|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话唯一 ID|
+|»» title|string|true|none||会话标题|
+|»» mode|string|true|none||运行模式：read_only、plan、agent 或 break_glass|
+|»» status|string|true|none||会话状态，例如 idle、running、waiting_approval、completed_unread 或 error|
+|»» source|string|true|none||会话来源：manual、scheduled 或 inspection|
+|»» profileId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||LLM Profile ID；null 表示使用默认 Profile|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» toolSource|string|true|none||工具来源|
+|»» safetyPolicy|string|true|none||安全策略|
+|»» mcpServers|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|[object]|false|none||none|
+|»»»» name|string|true|none||服务端唯一名称|
+|»»»» command|[string]|true|none||none|
+|»»»» cwd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|string|false|none||可选工作目录|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||最后错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|read_only|
+|mode|plan|
+|mode|agent|
+|mode|break_glass|
+|toolSource|current_mcp|
+|toolSource|stdio|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询 Token 用量明细
+
+GET /agent/sessions/{sessionId}/usage
+
+查询 Token 用量明细。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": []
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|[object]|true|none||none|
+|»» id|integer|true|none||记录 ID|
+|»» sessionId|string|true|none||会话 ID|
+|»» traceId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||Trace ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» model|string|true|none||模型|
+|»» inputTokens|integer|true|none||输入 token|
+|»» cachedInputTokens|integer|false|none||缓存输入 token|
+|»» nonCachedInputTokens|integer|false|none||非缓存输入 token|
+|»» outputTokens|integer|true|none||输出 token|
+|»» totalTokens|integer|true|none||总 token|
+|»» cachedInputCost|number|false|none||缓存输入费用|
+|»» nonCachedInputCost|number|false|none||非缓存输入费用|
+|»» inputCost|number|true|none||输入费用|
+|»» outputCost|number|true|none||输出费用|
+|»» totalCost|number|true|none||总费用|
+|»» createdAt|string(date-time)|true|none||ISO 8601 时间|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询会话计费汇总
+
+GET /agent/sessions/{sessionId}/billing
+
+查询会话计费汇总。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "sessionId": "sess_01JEXAMPLE",
+    "totalInputTokens": 1200,
+    "totalCachedInputTokens": 0,
+    "totalNonCachedInputTokens": 1200,
+    "totalOutputTokens": 300,
+    "totalTokens": 1500,
+    "totalCachedInputCost": 0,
+    "totalNonCachedInputCost": 0.0012,
+    "totalInputCost": 0.0012,
+    "totalOutputCost": 0.0009,
+    "totalCost": 0.0021,
+    "callCount": 1
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话 ID|
+|»» totalInputTokens|integer|true|none||输入 token 合计|
+|»» totalCachedInputTokens|integer|false|none||缓存输入 token 合计|
+|»» totalNonCachedInputTokens|integer|false|none||非缓存输入 token 合计|
+|»» totalOutputTokens|integer|true|none||输出 token 合计|
+|»» totalTokens|integer|true|none||token 总计|
+|»» totalCachedInputCost|number|false|none||缓存输入费用合计|
+|»» totalNonCachedInputCost|number|false|none||非缓存输入费用合计|
+|»» totalInputCost|number|false|none||输入费用合计|
+|»» totalOutputCost|number|false|none||输出费用合计|
+|»» totalCost|number|true|none||总费用|
+|»» callCount|integer|true|none||模型调用次数|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+## GET 查询最近 Agent 会话状态
+
+GET /agent/status
+
+首页轻量状态接口。仅返回当前登录用户最近会话的状态摘要，不加载消息及 Trace 明细。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|limit|query|integer| 否 ||返回最近会话数量，1 至 20，默认 5。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "sessionId": "sess_01JEXAMPLE",
+        "title": "磁盘异常排查",
+        "status": "running",
+        "source": "manual",
+        "summary": null,
+        "lastError": null,
+        "createdAt": "2026-08-16T15:00:00",
+        "updatedAt": "2026-08-16T15:01:00",
+        "finishedAt": null
+      }
+    ]
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» total|integer|true|none||总记录数|
+|»» items|[object]|true|none||数据列表|
+|»»» sessionId|string|true|none||会话唯一 ID|
+|»»» title|string|true|none||会话标题|
+|»»» status|string|true|none||当前状态|
+|»»» source|string|true|none||会话来源|
+|»»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||最近错误|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+# 日志管理
+
+<a id="opIdgetAll_log_all_get"></a>
+
+## GET 查询操作日志列表
+
+GET /log/all
+
+返回系统记录的全部操作日志，不分页。日志字段可能包含请求和返回快照，调用方应避免在页面或外部系统泄露敏感信息。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|[object]|true|none||none|
+|»» logId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||日志 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» functionName|string|true|none||函数名|
+|»» inputParams|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» returnValue|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» userId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||用户 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» ipAddress|string|true|none||来源 IP|
+|»» operationTime|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||操作时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» executionTime|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|number|false|none||执行耗时毫秒|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» errorMessage|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» requestPath|string|true|none||请求路径|
+|»» httpMethod|string|true|none||HTTP 方法|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+# Agent
+
+<a id="opIdmarkSessionRead_agent_sessions__sessionId__mark_read_put"></a>
+
+## PUT 标记 Agent 会话已读
+
+PUT /agent/sessions/{sessionId}/mark-read
+
+标记 Agent 会话已读。需要登录后的 accessToken HttpOnly Cookie。 成功响应统一为 {code: 1, msg: 'success', data: ...}；业务校验失败通常为 HTTP 200 且 code=0。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话唯一 ID|
+|»» title|string|true|none||会话标题|
+|»» mode|string|true|none||运行模式：read_only、plan、agent 或 break_glass|
+|»» status|string|true|none||会话状态，例如 idle、running、waiting_approval、completed_unread 或 error|
+|»» source|string|true|none||会话来源：manual、scheduled 或 inspection|
+|»» profileId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||LLM Profile ID；null 表示使用默认 Profile|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» toolSource|string|true|none||工具来源|
+|»» safetyPolicy|string|true|none||安全策略|
+|»» mcpServers|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|[object]|false|none||none|
+|»»»» name|string|true|none||服务端唯一名称|
+|»»»» command|[string]|true|none||none|
+|»»»» cwd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|string|false|none||可选工作目录|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||最后错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|read_only|
+|mode|plan|
+|mode|agent|
+|mode|break_glass|
+|toolSource|current_mcp|
+|toolSource|stdio|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+<a id="opIdswitchAgentMode_agent_sessions__sessionId__mode_put"></a>
+
+## PUT 切换 Agent 运行模式
+
+PUT /agent/sessions/{sessionId}/mode
+
+即时切换并持久化会话模式。合法值为 read_only、plan、agent、break_glass；不合法模式为业务失败。
+
+> Body 请求参数
+
+```json
+{
+  "mode": "read_only"
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 是 ||登录后由服务端写入的 HttpOnly Cookie。除登录、刷新及管理员本地接口外均必填。|
+|refreshToken|cookie|string| 否 ||none|
+|sessionId|path|string| 是 ||Agent 会话 ID。仅允许当前登录用户拥有的会话。|
+|body|body|object| 是 ||none|
+|» mode|body|string| 是 ||目标模式|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|» mode|read_only|
+|» mode|plan|
+|» mode|agent|
+|» mode|break_glass|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {}
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|未携带、过期或非法 accessToken 时由全局拦截器返回；data 为 null。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» sessionId|string|true|none||会话唯一 ID|
+|»» title|string|true|none||会话标题|
+|»» mode|string|true|none||运行模式：read_only、plan、agent 或 break_glass|
+|»» status|string|true|none||会话状态，例如 idle、running、waiting_approval、completed_unread 或 error|
+|»» source|string|true|none||会话来源：manual、scheduled 或 inspection|
+|»» profileId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||LLM Profile ID；null 表示使用默认 Profile|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» toolSource|string|true|none||工具来源|
+|»» safetyPolicy|string|true|none||安全策略|
+|»» mcpServers|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|[object]|false|none||none|
+|»»»» name|string|true|none||服务端唯一名称|
+|»»»» command|[string]|true|none||none|
+|»»»» cwd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|string|false|none||可选工作目录|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»»» *anonymous*|null|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||会话摘要|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastError|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||最后错误信息|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||ISO 8601 创建时间|
+|»» updatedAt|string(date-time)|true|none||ISO 8601 更新时间|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 完成时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|mode|read_only|
+|mode|plan|
+|mode|agent|
+|mode|break_glass|
+|toolSource|current_mcp|
+|toolSource|stdio|
+
+状态码 **401**
+
+*业务校验失败通常仍返回 HTTP 200，但 code 为 0；认证失败返回 HTTP 401。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+# 管理员特权审批
+
+## GET 查询工具授权请求详情
+
+GET /admin/elevation/authorization/{code}
+
+仅限 localhost 调用。查询数据库中工具授权请求的详细信息，用于管理员审批展示。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|code|path|string| 是 ||特权审批码，格式如 NGA7-K3X9。|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» code|string|true|none||授权审批码|
+|»» sessionId|string|true|none||会话 ID|
+|»» sourceType|string|false|none||来源：manual、scheduled 或 inspection|
+|»» taskId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||关联定时任务 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» toolName|string|true|none||请求授权的工具名|
+|»» args|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|any|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» paths|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|[string]|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» commandLine|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||请求命令|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» reason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||请求原因|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» policyReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||策略命中原因|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» riskLevel|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||风险等级|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» ttlSeconds|integer|true|none||有效期秒数|
+|»» maxRuns|integer|true|none||最大运行次数|
+|»» status|string|true|none||审批状态|
+|»» createdAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||创建时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||审批人|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» rejectReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||拒绝原因|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+<a id="opIdget_code_admin_elevation_codes__code__get"></a>
+
+## GET 查询特权审批码
+
+GET /admin/elevation/codes/{code}
+
+仅限 localhost 调用，必须携带 /etc/nereus/admin_token 的 Bearer Token。查询内存中的特权审批码生命周期详情。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|code|path|string| 是 ||特权审批码，格式如 NGA7-K3X9。|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» code|string|true|none||特权审批码，格式如 NGA7-K3X9|
+|»» session_id|string|true|none||关联 Agent 会话 ID|
+|»» request_type|string|true|none||请求类型：privileged、scheduled_task_policy 或 tool_authorization|
+|»» task_id|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||关联定时任务 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approval_policy|any|false|none||none|
+|»» commands|[object]|true|none||none|
+|»»» command|string|true|none||命令|
+|»»» args|[any]|false|none||none|
+|»» reason|string|true|none||申请原因|
+|»» status|string|true|none||状态：pending、approved、rejected、expired 或 consumed|
+|»» ttl_seconds|integer|true|none||有效期秒数|
+|»» max_ops|integer|true|none||允许最大操作次数|
+|»» ops_used|integer|true|none||已使用操作次数|
+|»» requested_at|string(date-time)|true|none||ISO 8601 申请时间|
+|»» approved_by|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||审批人|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approved_at|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 审批时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» token_id|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||JIT Token ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» expired|boolean|true|none||是否已过期|
+|»» exhausted|boolean|true|none||是否已耗尽操作次数|
+|»» inline_cmd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||待执行的自由命令|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» inline_cmd_hash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||命令哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» script_path|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||待审计脚本路径|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» script_hash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||脚本哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+<a id="opIdlist_pending_admin_elevation_pending_get"></a>
+
+## GET 查询待审批特权码列表
+
+GET /admin/elevation/pending
+
+仅限 localhost 调用。列出未过期且状态为 pending 的内存特权审批码。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": []
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|[object]|true|none||none|
+|»» code|string|true|none||特权审批码，格式如 NGA7-K3X9|
+|»» session_id|string|true|none||关联 Agent 会话 ID|
+|»» request_type|string|true|none||请求类型：privileged、scheduled_task_policy 或 tool_authorization|
+|»» task_id|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||关联定时任务 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approval_policy|any|false|none||none|
+|»» commands|[object]|true|none||none|
+|»»» command|string|true|none||命令|
+|»»» args|[any]|false|none||none|
+|»» reason|string|true|none||申请原因|
+|»» status|string|true|none||状态：pending、approved、rejected、expired 或 consumed|
+|»» ttl_seconds|integer|true|none||有效期秒数|
+|»» max_ops|integer|true|none||允许最大操作次数|
+|»» ops_used|integer|true|none||已使用操作次数|
+|»» requested_at|string(date-time)|true|none||ISO 8601 申请时间|
+|»» approved_by|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||审批人|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approved_at|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 审批时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» token_id|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||JIT Token ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» expired|boolean|true|none||是否已过期|
+|»» exhausted|boolean|true|none||是否已耗尽操作次数|
+|»» inline_cmd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||待执行的自由命令|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» inline_cmd_hash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||命令哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» script_path|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||待审计脚本路径|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» script_hash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||脚本哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+<a id="opIdapprove_code_admin_elevation_approve_post"></a>
+
+## POST 批准特权请求
+
+POST /admin/elevation/approve
+
+仅限 localhost 调用。批准 pending 审批码并签发 JIT Token；工具授权请求可选 path_prefix 覆盖持久化授权路径范围。
+
+> Body 请求参数
+
+```json
+{
+  "code": "string",
+  "approved_by": "admin",
+  "path_prefix": "string"
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+|body|body|object| 是 ||none|
+|» code|body|string| 是 ||待批准的 pending 审批码|
+|» approved_by|body|string| 否 ||审批人标识，默认 admin|
+|» path_prefix|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||仅 tool_authorization：用该路径前缀覆盖请求路径授权范围|
+|»» *anonymous*|body|null| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "status": "approved",
+    "request_type": "privileged",
+    "code": "NGA7-K3X9",
+    "token_id": "550e8400-e29b-41d4-a716-446655440000",
+    "session_id": "sess_01JEXAMPLE",
+    "taskId": null,
+    "max_ops": 10,
+    "allowed_commands": []
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» status|string|true|none||approved|
+|»» request_type|string|false|none||请求类型|
+|»» code|string|true|none||审批码|
+|»» token_id|string|true|none||JIT Token ID|
+|»» session_id|string|true|none||会话 ID|
+|»» taskId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||任务 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» max_ops|integer|true|none||最大操作次数|
+|»» allowed_commands|[any]|true|none||none|
+
+<a id="opIdreject_code_admin_elevation_reject_post"></a>
+
+## POST 拒绝特权请求
+
+POST /admin/elevation/reject
+
+仅限 localhost 调用。拒绝 pending 审批码；对应任务或工具授权请求会同步写入拒绝状态。接口对不存在 code 保持幂等成功响应。
+
+> Body 请求参数
+
+```json
+{
+  "code": "string",
+  "reason": "管理员拒绝"
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+|body|body|object| 是 ||none|
+|» code|body|string| 是 ||待拒绝的 pending 审批码|
+|» reason|body|string| 否 ||拒绝原因，默认 管理员拒绝|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "status": "rejected",
+    "code": "NGA7-K3X9",
+    "request_type": "privileged",
+    "taskId": null
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» status|string|true|none||rejected|
+|»» code|string|true|none||审批码|
+|»» request_type|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||请求类型|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» taskId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||任务 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+<a id="opIdrevoke_token_admin_elevation_revoke_post"></a>
+
+## POST 吊销特权 Token
+
+POST /admin/elevation/revoke
+
+仅限 localhost 调用。强制吊销一个已经签发的 JIT Token；Token 不存在或已过期时返回业务失败。
+
+> Body 请求参数
+
+```json
+{
+  "token_id": "string"
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+|body|body|object| 是 ||none|
+|» token_id|body|string| 是 ||待吊销的 JIT Token ID|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "status": "revoked",
+    "token_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» status|string|true|none||revoked|
+|»» token_id|string|true|none||Token ID|
+
+<a id="opIdaudit_code_admin_elevation_audit__code__get"></a>
+
+## GET 审计特权请求
+
+GET /admin/elevation/audit/{code}
+
+仅限 localhost 调用。仅允许审计 pending 审批码；对命令或脚本进行安全审计，返回风险等级、发现项和人工审批建议。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|code|path|string| 是 ||特权审批码，格式如 NGA7-K3X9。|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|object|true|none||none|
+|»» code|string|true|none||审批码|
+|»» audit|object|true|none||none|
+|»»» risk_level|string|true|none||风险等级|
+|»»» summary|string|true|none||审计摘要|
+|»»» findings|[any]|true|none||none|
+|»»» dangerous_commands|[any]|true|none||none|
+|»»» network_requests|boolean|true|none||是否涉及网络请求|
+|»»» nested_execution|boolean|true|none||是否包含嵌套执行|
+|»»» ai_advice|string|true|none||人工审批建议|
+
+<a id="opIdlist_history_admin_elevation_history_get"></a>
+
+## GET 查询特权审批历史
+
+GET /admin/elevation/history
+
+仅限 localhost 调用。返回最近已处理或已过期的审批记录，排除仍处于 pending 状态的记录。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|limit|query|integer| 否 ||最近审批历史数量，默认 50。|
+|Authorization|header|string| 是 ||仅 localhost 可调用。格式：Bearer <由 /etc/nereus/admin_token 读取的令牌>。|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "note": "请结合响应 JSON Schema 查看字段定义。"
+  }
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|统一成功包络。业务失败可仍使用 HTTP 200 且 code=0。|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+*业务成功时 code 为 1。*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务状态码：1 表示成功；0 表示业务失败；40101 至 40104 表示认证失败或令牌状态错误。|
+|» msg|string|true|none||结果说明；成功默认值为 success。|
+|» data|[object]|true|none||none|
+|»» code|string|true|none||特权审批码，格式如 NGA7-K3X9|
+|»» session_id|string|true|none||关联 Agent 会话 ID|
+|»» request_type|string|true|none||请求类型：privileged、scheduled_task_policy 或 tool_authorization|
+|»» task_id|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|integer|false|none||关联定时任务 ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approval_policy|any|false|none||none|
+|»» commands|[object]|true|none||none|
+|»»» command|string|true|none||命令|
+|»»» args|[any]|false|none||none|
+|»» reason|string|true|none||申请原因|
+|»» status|string|true|none||状态：pending、approved、rejected、expired 或 consumed|
+|»» ttl_seconds|integer|true|none||有效期秒数|
+|»» max_ops|integer|true|none||允许最大操作次数|
+|»» ops_used|integer|true|none||已使用操作次数|
+|»» requested_at|string(date-time)|true|none||ISO 8601 申请时间|
+|»» approved_by|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||审批人|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approved_at|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||ISO 8601 审批时间|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» token_id|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||JIT Token ID|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» expired|boolean|true|none||是否已过期|
+|»» exhausted|boolean|true|none||是否已耗尽操作次数|
+|»» inline_cmd|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||待执行的自由命令|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» inline_cmd_hash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||命令哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» script_path|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||待审计脚本路径|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» script_hash|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||脚本哈希|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+# ScheduledTask
+
+<a id="opIdcreateTask_scheduled_tasks_post"></a>
+
+## POST 创建定时任务
+
+POST /scheduled-tasks
+
+创建后台 Agent 定时任务。需要 accessToken Cookie。name 1..100 字符，cronExpression 为 5 段 crontab，taskDescription 为执行指令。未传 approvalPolicy 时创建 active 并注册调度；传入策略时创建 pending_approval 并签发 approvalCode，管理员批准后才执行。
+
+> Body 请求参数
+
+```json
+{
+  "name": "string",
+  "cronExpression": "string",
+  "taskDescription": "string",
+  "approvalPolicy": {
+    "allowedTools": [
+      "string"
+    ],
+    "allowedCommands": [
+      "string"
+    ],
+    "allowedPaths": [
+      "string"
+    ],
+    "deniedPaths": [
+      "string"
+    ],
+    "allowedPrivilegedCommands": [
+      "string"
+    ],
+    "ttlSeconds": 25200,
+    "maxRuns": 100
+  }
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|body|body|object| 是 ||none|
+|» name|body|string| 否 ||none|
+|» cronExpression|body|string| 否 ||none|
+|» taskDescription|body|string| 否 ||none|
+|» approvalPolicy|body|object| 否 ||none|
+|»» allowedTools|body|[string]| 否 ||允许无人值守调用的工具名|
+|»» allowedCommands|body|[string]| 否 ||runCommand/runShellCommand 命令前缀白名单；空数组拒绝命令|
+|»» allowedPaths|body|[string]| 否 ||允许访问的路径前缀|
+|»» deniedPaths|body|[string]| 否 ||拒绝访问的路径前缀|
+|»» allowedPrivilegedCommands|body|[string]| 否 ||允许的特权命令白名单|
+|»» ttlSeconds|body|integer| 否 ||审批授权有效期，秒|
+|»» maxRuns|body|integer| 否 ||最多执行次数|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "name": "每日巡检",
+    "cronExpression": "0 3 * * *",
+    "taskDescription": "检查磁盘与 Nginx 状态并汇总",
+    "status": "active",
+    "createdBy": 1001,
+    "approvalPolicy": null,
+    "approvalCode": null,
+    "approvalStatus": null,
+    "approvalApprovedAt": null,
+    "approvalApprovedBy": null,
+    "approvalTokenId": null,
+    "approvalRejectedReason": null,
+    "nextRunAt": "2026-08-18T03:00:00+08:00",
+    "lastRunAt": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» name|string|true|none||none|
+|»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»» status|string|true|none||none|
+|»» createdBy|integer|true|none||none|
+|»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdlistTasks_scheduled_tasks_get"></a>
+
+## GET 查询定时任务列表
+
+GET /scheduled-tasks
+
+查询系统范围内的定时任务。需要 accessToken Cookie。status 可按 active/paused/pending_approval/deleted 筛选；includeDeleted 默认 false。返回 {total,items[]}，items 为完整 ScheduledTaskResponse。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|status|query|string| 否 ||状态筛选：active、paused、pending_approval、deleted|
+|includeDeleted|query|boolean| 否 ||是否包含软删除任务|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "id": 1,
+        "name": "每日巡检",
+        "cronExpression": "0 3 * * *",
+        "taskDescription": "检查磁盘与 Nginx 状态并汇总",
+        "status": "active",
+        "createdBy": 1001,
+        "approvalPolicy": null,
+        "approvalCode": null,
+        "approvalStatus": null,
+        "approvalApprovedAt": null,
+        "approvalApprovedBy": null,
+        "approvalTokenId": null,
+        "approvalRejectedReason": null,
+        "nextRunAt": "2026-08-18T03:00:00+08:00",
+        "lastRunAt": null,
+        "createdAt": "2026-08-17T10:00:00Z",
+        "updatedAt": "2026-08-17T10:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» total|integer|false|none||none|
+|»» items|[object]|false|none||none|
+|»»» id|integer|true|none||none|
+|»»» name|string|true|none||none|
+|»»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»»» status|string|true|none||none|
+|»»» createdBy|integer|true|none||none|
+|»»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||none|
+|»»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdlistAllTasks_scheduled_tasks_all_get"></a>
+
+## GET 查询全部定时任务
+
+GET /scheduled-tasks/all
+
+后台管理视图查询全部定时任务。需要 accessToken Cookie。includeDeleted 默认 true，与 GET /scheduled-tasks 的区别是默认包含 deleted；status 仍可筛选。返回 {total,items[]}。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|status|query|string| 否 ||状态筛选|
+|includeDeleted|query|boolean| 否 ||是否包含软删除任务，默认 true|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": []
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» total|integer|false|none||none|
+|»» items|[object]|false|none||none|
+|»»» id|integer|true|none||none|
+|»»» name|string|true|none||none|
+|»»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»»» status|string|true|none||none|
+|»»» createdBy|integer|true|none||none|
+|»»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||none|
+|»»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdlistPendingApprovalTasks_scheduled_tasks_pending_approval_get"></a>
+
+## GET 查询待审批定时任务
+
+GET /scheduled-tasks/pending-approval
+
+列出所有 pending_approval 任务，供管理员审批页使用。需要 accessToken Cookie。每条记录包含 approvalCode、approvalPolicy、approvalStatus 和拒绝原因等字段。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": []
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» total|integer|false|none||none|
+|»» items|[object]|false|none||none|
+|»»» id|integer|true|none||none|
+|»»» name|string|true|none||none|
+|»»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»»» status|string|true|none||none|
+|»»» createdBy|integer|true|none||none|
+|»»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||none|
+|»»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetRun_scheduled_tasks_runs_runId_get"></a>
+
+## GET 查询定时任务执行记录
+
+GET /scheduled-tasks/runs/{runId}
+
+按 runId 查询单次定时任务执行记录。需要 accessToken Cookie。不存在时返回业务错误；成功 data 为 ScheduledTaskRunResponse，可用 sessionId 关联 Agent 会话。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|runId|path|integer| 是 ||执行记录主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "taskId": 1,
+    "sessionId": "sess_demo",
+    "status": "success",
+    "startedAt": "2026-08-17T03:00:00Z",
+    "finishedAt": "2026-08-17T03:00:02Z",
+    "resultSummary": "检查完成",
+    "errorMessage": null,
+    "tokenUsage": {
+      "total": 120
+    }
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» taskId|integer|true|none||none|
+|»» sessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» status|string|true|none||none|
+|»» startedAt|string(date-time)|true|none||none|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» resultSummary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» errorMessage|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» tokenUsage|any|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetApproval_scheduled_tasks_taskId_approval_get"></a>
+
+## GET 查询任务审批详情
+
+GET /scheduled-tasks/{taskId}/approval
+
+查询任务审批状态。需要 accessToken Cookie。返回 taskId、status、approvalPolicy、approvalCode、approvalStatus、approvedAt/by、tokenId 和 rejectedReason；任务不存在时返回业务错误。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "taskId": 1,
+    "status": "pending_approval",
+    "approvalPolicy": {
+      "allowedTools": [
+        "runCommand"
+      ],
+      "allowedCommands": [
+        "df -h"
+      ],
+      "allowedPaths": [],
+      "deniedPaths": [],
+      "allowedPrivilegedCommands": [],
+      "ttlSeconds": 25200,
+      "maxRuns": 100
+    },
+    "approvalCode": "ABC123",
+    "approvalStatus": "pending",
+    "approvalApprovedAt": null,
+    "approvalApprovedBy": null,
+    "approvalTokenId": null,
+    "approvalRejectedReason": null
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» taskId|integer|false|none||none|
+|»» status|string|false|none||none|
+|»» approvalPolicy|any|false|none||none|
+|»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdreissueApproval_scheduled_tasks_taskId_approval_reissue_post"></a>
+
+## POST 重新签发任务审批码
+
+POST /scheduled-tasks/{taskId}/approval/reissue
+
+为 pending_approval 且存在 approvalPolicy 的任务重新签发审批码。需要 accessToken Cookie。旧 code 立即失效，返回更新后的 ScheduledTaskResponse；active/paused 或无策略任务返回业务错误。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "name": "每日巡检",
+    "cronExpression": "0 3 * * *",
+    "taskDescription": "检查磁盘与 Nginx 状态并汇总",
+    "status": "pending_approval",
+    "createdBy": 1001,
+    "approvalPolicy": {
+      "allowedTools": [
+        "runCommand"
+      ],
+      "allowedCommands": [
+        "df -h"
+      ],
+      "allowedPaths": [],
+      "deniedPaths": [],
+      "allowedPrivilegedCommands": [],
+      "ttlSeconds": 25200,
+      "maxRuns": 100
+    },
+    "approvalCode": "ABC123",
+    "approvalStatus": "pending",
+    "approvalApprovedAt": null,
+    "approvalApprovedBy": null,
+    "approvalTokenId": null,
+    "approvalRejectedReason": null,
+    "nextRunAt": null,
+    "lastRunAt": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» name|string|true|none||none|
+|»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»» status|string|true|none||none|
+|»» createdBy|integer|true|none||none|
+|»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetTask_scheduled_tasks_taskId_get"></a>
+
+## GET 查询单个定时任务
+
+GET /scheduled-tasks/{taskId}
+
+按 taskId 查询定时任务详情。需要 accessToken Cookie。deleted 任务按不存在处理；成功返回 ScheduledTaskResponse。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "name": "每日巡检",
+    "cronExpression": "0 3 * * *",
+    "taskDescription": "检查磁盘与 Nginx 状态并汇总",
+    "status": "active",
+    "createdBy": 1001,
+    "approvalPolicy": null,
+    "approvalCode": null,
+    "approvalStatus": null,
+    "approvalApprovedAt": null,
+    "approvalApprovedBy": null,
+    "approvalTokenId": null,
+    "approvalRejectedReason": null,
+    "nextRunAt": "2026-08-18T03:00:00+08:00",
+    "lastRunAt": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» name|string|true|none||none|
+|»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»» status|string|true|none||none|
+|»» createdBy|integer|true|none||none|
+|»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdupdateTask_scheduled_tasks_taskId_put"></a>
+
+## PUT 更新定时任务
+
+PUT /scheduled-tasks/{taskId}
+
+部分更新定时任务。需要 accessToken Cookie。name/cronExpression/taskDescription/approvalPolicy 均可选；cronExpression 仍须为合法 5 段表达式。传入 approvalPolicy 会清除旧审批并重新进入 pending_approval、签发新 code；空对象返回当前任务。
+
+> Body 请求参数
+
+```json
+{
+  "name": "string",
+  "cronExpression": "string",
+  "taskDescription": "string",
+  "approvalPolicy": {}
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+|body|body|object| 是 ||none|
+|» name|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+|» cronExpression|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+|» taskDescription|body|any| 否 ||none|
+|»» *anonymous*|body|string| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+|» approvalPolicy|body|any| 否 ||none|
+|»» *anonymous*|body|object| 否 ||none|
+|»» *anonymous*|body|null| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "name": "每日巡检（更新）",
+    "cronExpression": "0 4 * * *",
+    "taskDescription": "检查磁盘、Nginx 与容器状态",
+    "status": "active",
+    "createdBy": 1001,
+    "approvalPolicy": null,
+    "approvalCode": null,
+    "approvalStatus": null,
+    "approvalApprovedAt": null,
+    "approvalApprovedBy": null,
+    "approvalTokenId": null,
+    "approvalRejectedReason": null,
+    "nextRunAt": "2026-08-18T04:00:00+08:00",
+    "lastRunAt": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» name|string|true|none||none|
+|»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»» status|string|true|none||none|
+|»» createdBy|integer|true|none||none|
+|»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIddeleteTask_scheduled_tasks_taskId_delete"></a>
+
+## DELETE 删除定时任务
+
+DELETE /scheduled-tasks/{taskId}
+
+软删除定时任务。需要 accessToken Cookie。后端将 status 设为 deleted、清空 nextRunAt 并从调度器移除 job，不物理删除数据库记录；成功 data=null。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": null
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdpauseTask_scheduled_tasks_taskId_pause_post"></a>
+
+## POST 暂停定时任务
+
+POST /scheduled-tasks/{taskId}/pause
+
+暂停定时任务。需要 accessToken Cookie。状态变为 paused，清空 nextRunAt 并移除调度器 job；返回更新后的 ScheduledTaskResponse。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "name": "每日巡检",
+    "cronExpression": "0 3 * * *",
+    "taskDescription": "检查磁盘与 Nginx 状态并汇总",
+    "status": "paused",
+    "createdBy": 1001,
+    "approvalPolicy": null,
+    "approvalCode": null,
+    "approvalStatus": null,
+    "approvalApprovedAt": null,
+    "approvalApprovedBy": null,
+    "approvalTokenId": null,
+    "approvalRejectedReason": null,
+    "nextRunAt": null,
+    "lastRunAt": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» name|string|true|none||none|
+|»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»» status|string|true|none||none|
+|»» createdBy|integer|true|none||none|
+|»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdresumeTask_scheduled_tasks_taskId_resume_post"></a>
+
+## POST 恢复定时任务
+
+POST /scheduled-tasks/{taskId}/resume
+
+恢复定时任务。需要 accessToken Cookie。状态置为 active、重新注册调度器并计算 nextRunAt；返回更新后的 ScheduledTaskResponse。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "name": "每日巡检",
+    "cronExpression": "0 3 * * *",
+    "taskDescription": "检查磁盘与 Nginx 状态并汇总",
+    "status": "active",
+    "createdBy": 1001,
+    "approvalPolicy": null,
+    "approvalCode": null,
+    "approvalStatus": null,
+    "approvalApprovedAt": null,
+    "approvalApprovedBy": null,
+    "approvalRejectedReason": null,
+    "approvalTokenId": null,
+    "nextRunAt": "2026-08-18T03:00:00+08:00",
+    "lastRunAt": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» name|string|true|none||none|
+|»» cronExpression|string|true|none||5 段 crontab 表达式|
+|»» taskDescription|string|true|none||传给后台 Agent 的自然语言任务|
+|»» status|string|true|none||none|
+|»» createdBy|integer|true|none||none|
+|»» approvalPolicy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalCode|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalStatus|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalApprovedBy|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalTokenId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» approvalRejectedReason|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» nextRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» lastRunAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|status|active|
+|status|paused|
+|status|pending_approval|
+|status|deleted|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdtriggerTask_scheduled_tasks_taskId_trigger_post"></a>
+
+## POST 手动触发定时任务
+
+POST /scheduled-tasks/{taskId}/trigger
+
+立即执行一次定时任务并等待 Agent 临时会话结束。需要 accessToken Cookie。deleted 任务拒绝执行，pending_approval 任务提示等待审批；成功返回 ScheduledTaskRunResponse，失败记录 error 状态。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "taskId": 1,
+    "sessionId": "sess_demo",
+    "status": "success",
+    "startedAt": "2026-08-17T03:00:00Z",
+    "finishedAt": "2026-08-17T03:00:02Z",
+    "resultSummary": "检查完成",
+    "errorMessage": null,
+    "tokenUsage": {
+      "total": 120
+    }
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» taskId|integer|true|none||none|
+|»» sessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» status|string|true|none||none|
+|»» startedAt|string(date-time)|true|none||none|
+|»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» resultSummary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» errorMessage|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» tokenUsage|any|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdlistRuns_scheduled_tasks_taskId_runs_get"></a>
+
+## GET 查询任务运行历史
+
+GET /scheduled-tasks/{taskId}/runs
+
+查询指定任务最近运行记录。需要 accessToken Cookie。taskId 必须存在；limit 默认 50、范围 1..200；返回 {total,items[]}，items 为 ScheduledTaskRunResponse。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|taskId|path|integer| 是 ||定时任务主键|
+|limit|query|integer| 否 ||返回条数，1..200，默认 50|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "id": 1,
+        "taskId": 1,
+        "sessionId": "sess_demo",
+        "status": "success",
+        "startedAt": "2026-08-17T03:00:00Z",
+        "finishedAt": "2026-08-17T03:00:02Z",
+        "resultSummary": "检查完成",
+        "errorMessage": null,
+        "tokenUsage": {
+          "total": 120
+        }
+      }
+    ]
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» total|integer|false|none||none|
+|»» items|[object]|false|none||none|
+|»»» id|integer|true|none||none|
+|»»» taskId|integer|true|none||none|
+|»»» sessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» status|string|true|none||none|
+|»»» startedAt|string(date-time)|true|none||none|
+|»»» finishedAt|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string(date-time)|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» resultSummary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» errorMessage|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» tokenUsage|any|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+# Inspection
+
+<a id="opIdlistReports_inspection_reports_get"></a>
+
+## GET 查询巡检报告列表
+
+GET /inspection/reports
+
+分页查询自动巡检报告。需要 accessToken Cookie。page>=1，默认 1；pageSize 1..200，默认 20。data 为 {total,items[]}，items 使用 InspectionReportResponse；findings 是 Agent 从 fullReport 提取的结构化问题列表。报告不存在时列表为空。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|page|query|integer| 否 ||页码，最小 1|
+|pageSize|query|integer| 否 ||每页条数，1..200|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "id": 1,
+        "sessionId": "sess_demo",
+        "status": "completed",
+        "summary": "系统状态正常",
+        "findings": [],
+        "fullReport": "# report",
+        "durationMs": 1250,
+        "errorMessage": null,
+        "createdAt": "2026-08-17T10:00:00Z",
+        "updatedAt": "2026-08-17T10:00:01Z"
+      }
+    ]
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» total|integer|false|none||none|
+|»» items|[object]|false|none||none|
+|»»» id|integer|true|none||none|
+|»»» sessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» status|string|true|none||none|
+|»»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» findings|any|false|none||none|
+|»»» fullReport|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» durationMs|integer|true|none||none|
+|»»» errorMessage|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» createdAt|string(date-time)|true|none||none|
+|»»» updatedAt|string(date-time)|true|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdlatestReport_inspection_reports_latest_get"></a>
+
+## GET 查询最新巡检报告
+
+GET /inspection/reports/latest
+
+获取最近一次巡检报告。需要 accessToken Cookie；没有任何报告时 data 为 null。返回对象包含状态、摘要、发现项、原文和耗时。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": null
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|any|true|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|object|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» *anonymous*|null|false|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetReport_inspection_reports_reportId_get"></a>
+
+## GET 查询单个巡检报告
+
+GET /inspection/reports/{reportId}
+
+按 reportId 查询单个巡检报告。需要 accessToken Cookie。reportId 必须为整数；不存在时返回 code=0 的业务错误。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|reportId|path|integer| 是 ||巡检报告主键|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "sessionId": "sess_demo",
+    "status": "completed",
+    "summary": "系统状态正常",
+    "findings": [],
+    "fullReport": "# report",
+    "durationMs": 1250,
+    "errorMessage": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:01Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» sessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» status|string|true|none||none|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» findings|any|false|none||none|
+|»» fullReport|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» durationMs|integer|true|none||none|
+|»» errorMessage|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdtriggerInspection_inspection_trigger_post"></a>
+
+## POST 手动触发巡检
+
+POST /inspection/trigger
+
+立即启动一次自动巡检并等待 Agent 临时会话完成。需要 accessToken Cookie；服务端使用当前巡检预授权策略，创建报告后返回 InspectionReportResponse。执行期间可能耗时较长；Agent 失败时报告 status/errorMessage 记录失败原因。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "sessionId": "sess_demo",
+    "status": "completed",
+    "summary": "系统状态正常",
+    "findings": [],
+    "fullReport": "# report",
+    "durationMs": 1250,
+    "errorMessage": null,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:01Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» sessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» status|string|true|none||none|
+|»» summary|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» findings|any|false|none||none|
+|»» fullReport|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» durationMs|integer|true|none||none|
+|»» errorMessage|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetConfig_inspection_config_get"></a>
+
+## GET 查询巡检调度配置
+
+GET /inspection/config
+
+读取自动巡检调度器配置和 approvalPolicy。需要 accessToken Cookie。返回 intervalMinutes（分钟）、inspectionDocPath、timezone、schedulerStarted 及当前预授权策略；策略文件缺失/损坏时返回默认只读基线。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "inspectionIntervalMinutes": 30,
+    "inspectionDocPath": "/workspace/inspection.md",
+    "timezone": "Asia/Shanghai",
+    "schedulerStarted": true,
+    "approvalPolicy": {
+      "allowedTools": [
+        "runCommand"
+      ],
+      "allowedCommands": [
+        "uname -a"
+      ],
+      "allowedPaths": [],
+      "deniedPaths": [],
+      "allowedPrivilegedCommands": [],
+      "ttlSeconds": 25200,
+      "maxRuns": 100
+    }
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» inspectionIntervalMinutes|integer|false|none||none|
+|»» inspectionDocPath|string|false|none||none|
+|»» timezone|string|false|none||none|
+|»» schedulerStarted|boolean|false|none||none|
+|»» approvalPolicy|object|false|none||none|
+|»»» allowedTools|[string]|false|none||允许无人值守调用的工具名|
+|»»» allowedCommands|[string]|false|none||runCommand/runShellCommand 命令前缀白名单；空数组拒绝命令|
+|»»» allowedPaths|[string]|false|none||允许访问的路径前缀|
+|»»» deniedPaths|[string]|false|none||拒绝访问的路径前缀|
+|»»» allowedPrivilegedCommands|[string]|false|none||允许的特权命令白名单|
+|»»» ttlSeconds|integer|false|none||审批授权有效期，秒|
+|»»» maxRuns|integer|false|none||最多执行次数|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdupdateConfig_inspection_config_put"></a>
+
+## PUT 更新巡检调度配置
+
+PUT /inspection/config
+
+更新自动巡检间隔或无人值守 approvalPolicy。需要 accessToken Cookie。请求体字段均可选：intervalMinutes 1..1440；approvalPolicy 与 ScheduledTaskApprovalPolicy 相同。成功后立即更新调度器并返回合并后的完整配置；提交空对象也会返回当前配置。
+
+> Body 请求参数
+
+```json
+{
+  "intervalMinutes": 1,
+  "approvalPolicy": {
+    "allowedTools": [
+      "string"
+    ],
+    "allowedCommands": [
+      "string"
+    ],
+    "allowedPaths": [
+      "string"
+    ],
+    "deniedPaths": [
+      "string"
+    ],
+    "allowedPrivilegedCommands": [
+      "string"
+    ],
+    "ttlSeconds": 25200,
+    "maxRuns": 100
+  }
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|body|body|object| 是 ||none|
+|» intervalMinutes|body|integer| 否 ||none|
+|» approvalPolicy|body|object| 否 ||none|
+|»» allowedTools|body|[string]| 否 ||允许无人值守调用的工具名|
+|»» allowedCommands|body|[string]| 否 ||runCommand/runShellCommand 命令前缀白名单；空数组拒绝命令|
+|»» allowedPaths|body|[string]| 否 ||允许访问的路径前缀|
+|»» deniedPaths|body|[string]| 否 ||拒绝访问的路径前缀|
+|»» allowedPrivilegedCommands|body|[string]| 否 ||允许的特权命令白名单|
+|»» ttlSeconds|body|integer| 否 ||审批授权有效期，秒|
+|»» maxRuns|body|integer| 否 ||最多执行次数|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "inspectionIntervalMinutes": 30,
+    "inspectionDocPath": "/workspace/inspection.md",
+    "timezone": "Asia/Shanghai",
+    "schedulerStarted": true,
+    "approvalPolicy": {
+      "allowedTools": [
+        "runCommand"
+      ],
+      "allowedCommands": [
+        "uname -a"
+      ],
+      "allowedPaths": [],
+      "deniedPaths": [],
+      "allowedPrivilegedCommands": [],
+      "ttlSeconds": 25200,
+      "maxRuns": 100
+    }
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» inspectionIntervalMinutes|integer|false|none||none|
+|»» inspectionDocPath|string|false|none||none|
+|»» timezone|string|false|none||none|
+|»» schedulerStarted|boolean|false|none||none|
+|»» approvalPolicy|object|false|none||none|
+|»»» allowedTools|[string]|false|none||允许无人值守调用的工具名|
+|»»» allowedCommands|[string]|false|none||runCommand/runShellCommand 命令前缀白名单；空数组拒绝命令|
+|»»» allowedPaths|[string]|false|none||允许访问的路径前缀|
+|»»» deniedPaths|[string]|false|none||拒绝访问的路径前缀|
+|»»» allowedPrivilegedCommands|[string]|false|none||允许的特权命令白名单|
+|»»» ttlSeconds|integer|false|none||审批授权有效期，秒|
+|»»» maxRuns|integer|false|none||最多执行次数|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+# OpsExperience
+
+<a id="opIdcreatePack_ops_experience_packs_post"></a>
+
+## POST 创建运维经验包
+
+POST /ops-experience/packs
+
+人工创建经验包。需要 accessToken Cookie。title 与 deploymentDoc 必填；category=deployment|fault|optimization|security|negative，riskLevel=low|medium|high，status=enabled|disabled。stages/pitfalls/earlyWarnings 为结构化 JSON 数组。source 固定 human，初始 version=1、qualityScore=100。
+
+> Body 请求参数
+
+```json
+{
+  "title": "string",
+  "category": "deployment",
+  "osType": "通用",
+  "tags": [
+    "string"
+  ],
+  "deploymentDoc": "string",
+  "stages": [
+    null
+  ],
+  "pitfalls": [
+    null
+  ],
+  "earlyWarnings": [
+    null
+  ],
+  "riskLevel": "low",
+  "status": "enabled"
 }
 ```
 
@@ -7161,10 +17919,30 @@ mcpServers 自动发现规则：
 |refreshToken|cookie|string| 否 ||none|
 |body|body|object| 是 ||none|
 |» title|body|string| 是 ||none|
-|» mode|body|string| 是 ||none|
-|» profileId|body|integer| 是 ||none|
-|» toolSource|body|string| 是 ||none|
-|» safetyPolicy|body|string| 是 ||none|
+|» category|body|string| 否 ||none|
+|» osType|body|string| 否 ||none|
+|» tags|body|[string]| 否 ||none|
+|» deploymentDoc|body|string| 是 ||主体 Markdown 文档|
+|» stages|body|[any]| 否 ||none|
+|» pitfalls|body|[any]| 否 ||none|
+|» earlyWarnings|body|[any]| 否 ||none|
+|» riskLevel|body|string| 否 ||none|
+|» status|body|string| 否 ||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|» category|deployment|
+|» category|fault|
+|» category|optimization|
+|» category|security|
+|» category|negative|
+|» riskLevel|low|
+|» riskLevel|medium|
+|» riskLevel|high|
+|» status|enabled|
+|» status|disabled|
 
 > 返回示例
 
@@ -7172,22 +17950,70 @@ mcpServers 自动发现规则：
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "sessionId": "sess_e6d9702d7b61",
-        "title": "磁盘异常排查",
-        "mode": "agent",
-        "status": "idle",
-        "profileId": 2,
-        "toolSource": "current_mcp",
-        "safetyPolicy": "default",
-        "summary": null,
-        "lastError": null,
-        "createdAt": "2026-06-09T15:36:14.271472",
-        "updatedAt": "2026-06-09T15:36:14.271474",
-        "finishedAt": null
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "title": "Nginx 证书续期",
+    "category": "deployment",
+    "osType": "通用",
+    "tags": [
+      "nginx",
+      "ssl"
+    ],
+    "deploymentDoc": "# 操作步骤\n1. 检查 nginx -t",
+    "stages": [
+      {
+        "name": "检查",
+        "goal": "确认配置有效",
+        "steps": [
+          "nginx -t"
+        ],
+        "verify": "返回 successful",
+        "pitfallsRef": []
+      }
+    ],
+    "pitfalls": [],
+    "earlyWarnings": [],
+    "riskLevel": "medium",
+    "status": "enabled",
+    "source": "human",
+    "version": 1,
+    "sourceSessionId": null,
+    "hitCount": 0,
+    "usefulCount": 0,
+    "uselessCount": 0,
+    "qualityScore": 100,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z",
+    "attachments": []
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -7196,23 +18022,127 @@ mcpServers 自动发现规则：
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## GET 查询 Agent 会话列表
+状态码 **200**
 
-GET /agent/sessions
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» title|string|true|none||none|
+|»» category|string|true|none||none|
+|»» osType|string|true|none||none|
+|»» tags|[string]|false|none||none|
+|»» deploymentDoc|string|true|none||none|
+|»» stages|[any]|false|none||none|
+|»» pitfalls|[any]|false|none||none|
+|»» earlyWarnings|[any]|false|none||none|
+|»» riskLevel|string|true|none||none|
+|»» status|string|true|none||none|
+|»» source|string|true|none||none|
+|»» version|integer|true|none||none|
+|»» sourceSessionId|any|false|none||none|
 
-查询参数：
+*anyOf*
 
-| 参数 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| page | integer | 否 | 页码，默认 `1` |
-| pageSize | integer | 否 | 每页数量，默认 `20`，最大 `200` |
-| status | string | 否 | 按状态过滤 |
-| keyword | string | 否 | 按标题模糊搜索 |
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
 
-响应示例：
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» hitCount|integer|true|none||none|
+|»» usefulCount|integer|true|none||none|
+|»» uselessCount|integer|true|none||none|
+|»» qualityScore|integer|true|none||none|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+|»» attachments|[object]|false|none||none|
+|»»» id|integer|false|none||none|
+|»»» packId|integer|false|none||none|
+|»»» filename|string|false|none||none|
+|»»» fileType|string|false|none||none|
+|»»» storagePath|string|false|none||none|
+|»»» sha256|string|false|none||none|
+|»»» size|integer|false|none||none|
+|»»» arch|string|false|none||none|
+|»»» osType|string|false|none||none|
+|»»» createdAt|string(date-time)|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|category|deployment|
+|category|fault|
+|category|optimization|
+|category|security|
+|category|negative|
+|riskLevel|low|
+|riskLevel|medium|
+|riskLevel|high|
+|status|enabled|
+|status|disabled|
+|source|ai|
+|source|human|
+|fileType|script|
+|fileType|binary|
+|fileType|doc|
+|fileType|archive|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdlistPacks_ops_experience_packs_get"></a>
+
+## GET 查询运维经验包列表
+
+GET /ops-experience/packs
+
+分页查询经验包。需要 accessToken Cookie。page>=1 默认 1，pageSize 1..200 默认 20；q 对标题、标签和 Markdown 正文按空格分词 AND 匹配；category/status 可过滤。data 为 {total,items[]}，按 qualityScore、id 倒序。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|page|query|integer| 否 ||页码，默认 1|
+|pageSize|query|integer| 否 ||每页数量，1..200，默认 20|
+|q|query|string| 否 ||关键词，可空格分隔多个词|
+|category|query|string| 否 ||分类过滤|
+|status|query|string| 否 ||enabled 或 disabled|
+
+> 返回示例
+
+> 200 Response
 
 ```json
 {
@@ -7222,68 +18152,69 @@ GET /agent/sessions
     "total": 1,
     "items": [
       {
-        "sessionId": "sess_xxx",
-        "title": "磁盘异常排查",
-        "mode": "agent",
-        "status": "idle",
-        "profileId": 1,
-        "toolSource": "current_mcp",
-        "safetyPolicy": "default",
-        "summary": null,
-        "lastError": null,
-        "createdAt": "2026-06-09T13:00:00",
-        "updatedAt": "2026-06-09T13:05:00",
-        "finishedAt": null
+        "id": 1,
+        "title": "Nginx 证书续期",
+        "category": "deployment",
+        "osType": "通用",
+        "tags": [
+          "nginx",
+          "ssl"
+        ],
+        "deploymentDoc": "# 操作步骤\n1. 检查 nginx -t",
+        "stages": [
+          {
+            "name": "检查",
+            "goal": "确认配置有效",
+            "steps": [
+              "nginx -t"
+            ],
+            "verify": "返回 successful",
+            "pitfallsRef": []
+          }
+        ],
+        "pitfalls": [],
+        "earlyWarnings": [],
+        "riskLevel": "medium",
+        "status": "enabled",
+        "source": "human",
+        "version": 1,
+        "sourceSessionId": null,
+        "hitCount": 0,
+        "usefulCount": 0,
+        "uselessCount": 0,
+        "qualityScore": 100,
+        "createdAt": "2026-08-17T10:00:00Z",
+        "updatedAt": "2026-08-17T10:00:00Z",
+        "attachments": []
       }
     ]
   }
 }
 ```
 
-注意事项：
-
-- 只查询当前登录用户自己的会话。
-- `status` 可选值包括：`idle`、`running`、`waiting_approval`、`completed`、`cancelled`、`error`。
-- 当前 WebSocket turn 正常结束后会将状态恢复为 `idle`，方便继续下一轮。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|page|query|string| 否 ||none|
-|pageSize|query|string| 否 ||none|
-|status|query|string| 否 ||none|
-|keyword|query|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
+> 401 Response
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "total": 1,
-        "items": [
-            {
-                "sessionId": "sess_e6d9702d7b61",
-                "title": "磁盘异常排查",
-                "mode": "agent",
-                "status": "idle",
-                "profileId": 2,
-                "toolSource": "current_mcp",
-                "safetyPolicy": "default",
-                "summary": null,
-                "lastError": null,
-                "createdAt": "2026-06-09T15:36:14.271472",
-                "updatedAt": "2026-06-09T15:36:14.271474",
-                "finishedAt": null
-            }
-        ]
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -7292,19 +18223,98 @@ GET /agent/sessions
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## GET 查询单个 Agent 会话
+状态码 **200**
 
-GET /agent/sessions/{sessionId}
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» total|integer|false|none||none|
+|»» items|[object]|false|none||none|
+|»»» id|integer|true|none||none|
+|»»» title|string|true|none||none|
+|»»» category|string|true|none||none|
+|»»» osType|string|true|none||none|
+|»»» tags|[string]|false|none||none|
+|»»» deploymentDoc|string|true|none||none|
+|»»» stages|[any]|false|none||none|
+|»»» pitfalls|[any]|false|none||none|
+|»»» earlyWarnings|[any]|false|none||none|
+|»»» riskLevel|string|true|none||none|
+|»»» status|string|true|none||none|
+|»»» source|string|true|none||none|
+|»»» version|integer|true|none||none|
+|»»» sourceSessionId|any|false|none||none|
 
-响应体同创建会话返回的 `data`。
+*anyOf*
 
-注意事项：
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|string|false|none||none|
 
-- 只能查询当前登录用户自己的会话。
-- session 不存在或不属于当前用户时，会返回参数错误。
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» hitCount|integer|true|none||none|
+|»»» usefulCount|integer|true|none||none|
+|»»» uselessCount|integer|true|none||none|
+|»»» qualityScore|integer|true|none||none|
+|»»» createdAt|string(date-time)|true|none||none|
+|»»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|category|deployment|
+|category|fault|
+|category|optimization|
+|category|security|
+|category|negative|
+|riskLevel|low|
+|riskLevel|medium|
+|riskLevel|high|
+|status|enabled|
+|status|disabled|
+|source|ai|
+|source|human|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdgetPack_ops_experience_packs_packId_get"></a>
+
+## GET 查询运维经验包详情
+
+GET /ops-experience/packs/{packId}
+
+查询单个经验包及附件指针。需要 accessToken Cookie。packId 为主键；不存在时返回 code=0。data 包含正文、阶段/坑/预警、统计计数和 attachments（附件不返回文件内容）。
 
 ### 请求参数
 
@@ -7312,7 +18322,7 @@ GET /agent/sessions/{sessionId}
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
+|packId|path|integer| 是 ||经验包主键|
 
 > 返回示例
 
@@ -7320,22 +18330,70 @@ GET /agent/sessions/{sessionId}
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "sessionId": "sess_e6d9702d7b61",
-        "title": "磁盘异常排查",
-        "mode": "agent",
-        "status": "idle",
-        "profileId": 2,
-        "toolSource": "current_mcp",
-        "safetyPolicy": "default",
-        "summary": null,
-        "lastError": null,
-        "createdAt": "2026-06-09T15:36:14.271472",
-        "updatedAt": "2026-06-09T15:36:14.271474",
-        "finishedAt": null
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "title": "Nginx 证书续期",
+    "category": "deployment",
+    "osType": "通用",
+    "tags": [
+      "nginx",
+      "ssl"
+    ],
+    "deploymentDoc": "# 操作步骤\n1. 检查 nginx -t",
+    "stages": [
+      {
+        "name": "检查",
+        "goal": "确认配置有效",
+        "steps": [
+          "nginx -t"
+        ],
+        "verify": "返回 successful",
+        "pitfallsRef": []
+      }
+    ],
+    "pitfalls": [],
+    "earlyWarnings": [],
+    "riskLevel": "medium",
+    "status": "enabled",
+    "source": "human",
+    "version": 1,
+    "sourceSessionId": null,
+    "hitCount": 0,
+    "usefulCount": 0,
+    "uselessCount": 0,
+    "qualityScore": 100,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z",
+    "attachments": []
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
+  ]
 }
 ```
 
@@ -7344,14 +18402,366 @@ GET /agent/sessions/{sessionId}
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
-## DELETE 删除会话
+状态码 **200**
 
-DELETE /agent/sessions/{sessionId}
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» title|string|true|none||none|
+|»» category|string|true|none||none|
+|»» osType|string|true|none||none|
+|»» tags|[string]|false|none||none|
+|»» deploymentDoc|string|true|none||none|
+|»» stages|[any]|false|none||none|
+|»» pitfalls|[any]|false|none||none|
+|»» earlyWarnings|[any]|false|none||none|
+|»» riskLevel|string|true|none||none|
+|»» status|string|true|none||none|
+|»» source|string|true|none||none|
+|»» version|integer|true|none||none|
+|»» sourceSessionId|any|false|none||none|
 
-响应示例：
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» hitCount|integer|true|none||none|
+|»» usefulCount|integer|true|none||none|
+|»» uselessCount|integer|true|none||none|
+|»» qualityScore|integer|true|none||none|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+|»» attachments|[object]|false|none||none|
+|»»» id|integer|false|none||none|
+|»»» packId|integer|false|none||none|
+|»»» filename|string|false|none||none|
+|»»» fileType|string|false|none||none|
+|»»» storagePath|string|false|none||none|
+|»»» sha256|string|false|none||none|
+|»»» size|integer|false|none||none|
+|»»» arch|string|false|none||none|
+|»»» osType|string|false|none||none|
+|»»» createdAt|string(date-time)|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|category|deployment|
+|category|fault|
+|category|optimization|
+|category|security|
+|category|negative|
+|riskLevel|low|
+|riskLevel|medium|
+|riskLevel|high|
+|status|enabled|
+|status|disabled|
+|source|ai|
+|source|human|
+|fileType|script|
+|fileType|binary|
+|fileType|doc|
+|fileType|archive|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdupdatePack_ops_experience_packs_packId_put"></a>
+
+## PUT 更新运维经验包
+
+PUT /ops-experience/packs/{packId}
+
+部分更新人工经验包。需要 accessToken Cookie。所有字段可选；仅提交非空字段，version 自动加 1；category/riskLevel 使用枚举校验；不存在时返回业务错误。
+
+> Body 请求参数
+
+```json
+{
+  "title": "string",
+  "category": "deployment",
+  "osType": "通用",
+  "tags": [
+    "string"
+  ],
+  "deploymentDoc": "string",
+  "stages": [
+    null
+  ],
+  "pitfalls": [
+    null
+  ],
+  "earlyWarnings": [
+    null
+  ],
+  "riskLevel": "low",
+  "status": "enabled"
+}
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|packId|path|integer| 是 ||经验包主键|
+|body|body|object| 是 ||none|
+|» title|body|string| 否 ||none|
+|» category|body|string| 否 ||none|
+|» osType|body|string| 否 ||none|
+|» tags|body|[string]| 否 ||none|
+|» deploymentDoc|body|string| 否 ||主体 Markdown 文档|
+|» stages|body|[any]| 否 ||none|
+|» pitfalls|body|[any]| 否 ||none|
+|» earlyWarnings|body|[any]| 否 ||none|
+|» riskLevel|body|string| 否 ||none|
+|» status|body|string| 否 ||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|» category|deployment|
+|» category|fault|
+|» category|optimization|
+|» category|security|
+|» category|negative|
+|» riskLevel|low|
+|» riskLevel|medium|
+|» riskLevel|high|
+|» status|enabled|
+|» status|disabled|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "title": "Nginx 证书续期",
+    "category": "deployment",
+    "osType": "通用",
+    "tags": [
+      "nginx",
+      "ssl"
+    ],
+    "deploymentDoc": "# 操作步骤\n1. 检查 nginx -t",
+    "stages": [
+      {
+        "name": "检查",
+        "goal": "确认配置有效",
+        "steps": [
+          "nginx -t"
+        ],
+        "verify": "返回 successful",
+        "pitfallsRef": []
+      }
+    ],
+    "pitfalls": [],
+    "earlyWarnings": [],
+    "riskLevel": "medium",
+    "status": "enabled",
+    "source": "human",
+    "version": 1,
+    "sourceSessionId": null,
+    "hitCount": 0,
+    "usefulCount": 0,
+    "uselessCount": 0,
+    "qualityScore": 100,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z",
+    "attachments": []
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» title|string|true|none||none|
+|»» category|string|true|none||none|
+|»» osType|string|true|none||none|
+|»» tags|[string]|false|none||none|
+|»» deploymentDoc|string|true|none||none|
+|»» stages|[any]|false|none||none|
+|»» pitfalls|[any]|false|none||none|
+|»» earlyWarnings|[any]|false|none||none|
+|»» riskLevel|string|true|none||none|
+|»» status|string|true|none||none|
+|»» source|string|true|none||none|
+|»» version|integer|true|none||none|
+|»» sourceSessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» hitCount|integer|true|none||none|
+|»» usefulCount|integer|true|none||none|
+|»» uselessCount|integer|true|none||none|
+|»» qualityScore|integer|true|none||none|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+|»» attachments|[object]|false|none||none|
+|»»» id|integer|false|none||none|
+|»»» packId|integer|false|none||none|
+|»»» filename|string|false|none||none|
+|»»» fileType|string|false|none||none|
+|»»» storagePath|string|false|none||none|
+|»»» sha256|string|false|none||none|
+|»»» size|integer|false|none||none|
+|»»» arch|string|false|none||none|
+|»»» osType|string|false|none||none|
+|»»» createdAt|string(date-time)|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|category|deployment|
+|category|fault|
+|category|optimization|
+|category|security|
+|category|negative|
+|riskLevel|low|
+|riskLevel|medium|
+|riskLevel|high|
+|status|enabled|
+|status|disabled|
+|source|ai|
+|source|human|
+|fileType|script|
+|fileType|binary|
+|fileType|doc|
+|fileType|archive|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIddeletePack_ops_experience_packs_packId_delete"></a>
+
+## DELETE 删除运维经验包
+
+DELETE /ops-experience/packs/{packId}
+
+删除经验包及其附件指针。需要 accessToken Cookie。独占附件文件会尝试物理删除，共享哈希文件保留；不可恢复，成功 data=null。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|packId|path|integer| 是 ||经验包主键|
+
+> 返回示例
+
+> 200 Response
 
 ```json
 {
@@ -7361,497 +18771,29 @@ DELETE /agent/sessions/{sessionId}
 }
 ```
 
-注意事项：
-
-- 会同时删除该会话下的 `agent_messages`。
-- 当前实现不会级联删除 `agent_trace_logs`，Trace 仍可保留审计用途。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
+> 401 Response
 
 ```json
 {
-    "code": 1,
-    "msg": "success",
-    "data": null
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
 }
 ```
 
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## GET 查询会话消息历史
-
-GET /agent/sessions/{sessionId}/messages
-
-响应示例：
+> 422 Response
 
 ```json
 {
-  "code": 1,
-  "msg": "success",
-  "data": {
-    "total": 2,
-    "items": [
-      {
-        "messageId": 1,
-        "sessionId": "sess_xxx",
-        "role": "user",
-        "content": "帮我分析磁盘使用情况",
-        "traceId": "trace_xxx",
-        "roundIndex": 1,
-        "metadata": null,
-        "createdAt": "2026-06-09T13:01:00"
-      },
-      {
-        "messageId": 2,
-        "sessionId": "sess_xxx",
-        "role": "assistant",
-        "content": "磁盘使用情况如下...",
-        "traceId": "trace_xxx",
-        "roundIndex": 1,
-        "metadata": null,
-        "createdAt": "2026-06-09T13:01:10"
-      }
-    ]
-  }
-}
-```
-
-注意事项：
-
-- 当前历史恢复只保存 `user` 和最终 `assistant` 文本。
-- 工具结果不会原样作为跨轮上下文保存，避免 LLM tool message 格式错乱。
-- `roundIndex` 表示对话轮次，同一轮用户消息和助手最终回复使用同一个 index。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## GET 查询 Trace 原始事件
-
-GET /agent/traces
-
-查询参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| sessionId | string | 否 | 按 session 过滤 |
-| traceId | string | 否 | 按 trace 过滤 |
-| eventType | string | 否 | 按事件类型过滤 |
-| limit | integer | 否 | 限制条数，默认 `100`，最大 `1000` |
-
-响应示例：
-
-```json
-{
-  "code": 1,
-  "msg": "success",
-  "data": {
-    "total": 1,
-    "items": [
-      {
-        "id": 1,
-        "traceId": "trace_xxx",
-        "sessionId": "sess_xxx",
-        "eventType": "tool.result",
-        "timestamp": 1780000000.0,
-        "data": {
-          "tool": "listDirectory",
-          "output_len": 100
-        },
-        "entryHash": "abc123",
-        "prevHash": null,
-        "createdAt": "2026-06-09T13:00:00"
-      }
-    ]
-  }
-}
-```
-
-注意事项：
-
-- `data` 字段数据库内以 JSON 字符串保存，API 返回时会解析为对象。
-- 默认按最新事件倒序返回。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|query|string| 否 ||none|
-|traceId|query|string| 否 ||none|
-|eventType|query|string| 否 ||none|
-|limit|query|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## GET 查询 Session Timeline
-
-GET /agent/traces/{sessionId}/timeline
-
-```http
-GET /agent/traces/{sessionId}/timeline?limit=200
-```
-
-响应示例：
-
-```json
-{
-  "code": 1,
-  "msg": "success",
-  "data": {
-    "total": 3,
-    "items": [
-      {
-        "id": 1,
-        "traceId": "trace_xxx",
-        "sessionId": "sess_xxx",
-        "eventType": "input.received",
-        "stage": "接收指令",
-        "timestamp": 1780000000.0,
-        "data": {
-          "input": "帮我看看磁盘"
-        }
-      }
-    ]
-  }
-}
-```
-
-阶段映射：
-
-| eventType | stage |
-| --- | --- |
-| input.received | 接收指令 |
-| llm.request | 推理决策 |
-| llm.response | 推理决策 |
-| safety.check | 安全校验 |
-| approval.requested | 人工审批 |
-| approval.resolved | 人工审批 |
-| tool.result | 执行结果 |
-| injection.detected | 注入风险 |
-| session.done | 闭环完成 |
-
-注意事项：
-
-- Timeline 按时间正序返回。
-- 未在映射表中的事件，`stage` 会直接使用原始 `eventType`。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-|limit|query|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## GET 查询 Session Trace Summary
-
-GET /agent/traces/{sessionId}/summary
-
-响应示例：
-
-```json
-{
-  "code": 1,
-  "msg": "success",
-  "data": {
-    "sessionId": "sess_xxx",
-    "totalEvents": 10,
-    "toolCalls": 2,
-    "approvalCount": 1,
-    "hasInjection": false,
-    "traces": [
-      "trace_xxx"
-    ]
-  }
-}
-```
-
-注意事项：
-
-- `toolCalls` 统计 `tool.result` 事件数量。
-- `approvalCount` 统计 `approval.requested` 与 `approval.resolved`。
-- `hasInjection=true` 表示该会话出现过 prompt injection 检测事件。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## PUT 工具来源切换
-
-PUT /agent/sessions/{sessionId}/tool-source
-
-**Request Body：**
-```json
-{
-    "toolSource": "current_mcp" | "stdio",
-    "mcpServers": [
-        {
-            "name": "server-name",
-            "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem"],
-            "cwd": "/path/to/cwd"
-        }
-    ]
-}
-```
-
-**Response：**
-```json
-{
-    "code": 200,
-    "data": {
-        "sessionId": "sess_xxx",
-        "toolSource": "stdio",
-        "mcpServers": [...],
-        "updatedAt": "2026-06-09T12:00:00"
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
     }
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## PUT 模型切换
-
-PUT /agent/sessions/{sessionId}/switch-model
-
-**Request Body：**
-```json
-{
-    "profileId": 2
-}
-```
-
-**Response：**
-```json
-{
-    "code": 200,
-    "data": {
-        "sessionId": "sess_xxx",
-        "profileId": 2,
-        "updatedAt": "2026-06-09T12:00:00"
-    }
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-## GET Token 用量明细
-
-GET /agent/sessions/{sessionId}/usage
-
-**Response：**
-```json
-{
-    "code": 200,
-    "data": {
-        "total": 3,
-        "items": [
-            {
-                "id": 1,
-                "sessionId": "sess_xxx",
-                "model": "deepseek-chat",
-                "inputTokens": 1500,
-                "outputTokens": 320,
-                "totalTokens": 1820,
-                "inputCost": 0.00075,
-                "outputCost": 0.00064,
-                "totalCost": 0.00139,
-                "createdAt": "2026-06-09T12:00:00"
-            }
-        ]
-    }
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": [
-        {
-            "id": 1,
-            "sessionId": "sess_dd16ab5afedc",
-            "traceId": "trace_5141326d157e4603",
-            "model": "gemini-2.5-flash",
-            "inputTokens": 6243,
-            "outputTokens": 11,
-            "totalTokens": 6254,
-            "inputCost": 0.006243,
-            "outputCost": 3.3e-05,
-            "totalCost": 0.006276,
-            "createdAt": "2026-06-09T23:26:57.701264"
-        },
-        {
-            "id": 2,
-            "sessionId": "sess_dd16ab5afedc",
-            "traceId": "trace_9200d435016d41b9",
-            "model": "deepseek-v4-flash",
-            "inputTokens": 10985,
-            "outputTokens": 299,
-            "totalTokens": 11284,
-            "inputCost": 0.001099,
-            "outputCost": 0.00012,
-            "totalCost": 0.001218,
-            "createdAt": "2026-06-09T23:27:15.881350"
-        },
-        {
-            "id": 3,
-            "sessionId": "sess_dd16ab5afedc",
-            "traceId": "trace_00d2793517074373",
-            "model": "gpt-5.4-mini",
-            "inputTokens": 4796,
-            "outputTokens": 949,
-            "totalTokens": 5745,
-            "inputCost": 0.004796,
-            "outputCost": 0.002847,
-            "totalCost": 0.007643,
-            "createdAt": "2026-06-09T23:36:00.492757"
-        }
-    ]
+  ]
 }
 ```
 
@@ -7860,6 +18802,8 @@ GET /agent/sessions/{sessionId}/usage
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
@@ -7867,235 +18811,39 @@ GET /agent/sessions/{sessionId}/usage
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
-|» data|[object]|true|none||none|
-|»» id|integer|true|none||none|
-|»» sessionId|string|true|none||none|
-|»» traceId|string|true|none||none|
-|»» model|string|true|none||none|
-|»» inputTokens|integer|true|none||none|
-|»» outputTokens|integer|true|none||none|
-|»» totalTokens|integer|true|none||none|
-|»» inputCost|number|true|none||none|
-|»» outputCost|number|true|none||none|
-|»» totalCost|number|true|none||none|
-|»» createdAt|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
 
-## GET 会话计费汇总
-
-GET /agent/sessions/{sessionId}/billing
-
-**Response：**
-```json
-{
-    "code": 200,
-    "data": {
-        "sessionId": "sess_xxx",
-        "totalInputTokens": 4500,
-        "totalOutputTokens": 960,
-        "totalTokens": 5460,
-        "totalInputCost": 0.00225,
-        "totalOutputCost": 0.00192,
-        "totalCost": 0.00417,
-        "callCount": 3
-    }
-}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-{
-    "code": 1,
-    "msg": "success",
-    "data": {
-        "sessionId": "sess_dd16ab5afedc",
-        "totalInputTokens": 22024,
-        "totalOutputTokens": 1259,
-        "totalTokens": 23283,
-        "totalInputCost": 0.012138,
-        "totalOutputCost": 0.003,
-        "totalCost": 0.015137,
-        "callCount": 3
-    }
-}
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
-
-### 返回数据结构
-
-状态码 **200**
+状态码 **401**
 
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» code|integer|true|none||none|
-|» msg|string|true|none||none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
 |» data|object|true|none||none|
-|»» sessionId|string|true|none||none|
-|»» totalInputTokens|integer|true|none||none|
-|»» totalOutputTokens|integer|true|none||none|
-|»» totalTokens|integer|true|none||none|
-|»» totalInputCost|number|true|none||none|
-|»» totalOutputCost|number|true|none||none|
-|»» totalCost|number|true|none||none|
-|»» callCount|integer|true|none||none|
 
-# 日志管理
+<a id="opIdfeedback_ops_experience_packs_packId_feedback_post"></a>
 
-<a id="opIdgetAll_log_all_get"></a>
+## POST 反馈运维经验包
 
-## GET 查询操作日志列表
+POST /ops-experience/packs/{packId}/feedback
 
-GET /log/all
-
-查询系统记录的操作日志列表。返回每条日志的函数名、请求路径、HTTP 方法、输入参数、返回值、用户 ID、客户端 IP、执行耗时、错误信息和操作时间。该接口当前不分页，会一次返回全部日志记录，适合后台日志页初始化或调试排查。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-
-### 返回数据结构
-
-# Agent
-
-<a id="opIdmarkSessionRead_agent_sessions__sessionId__mark_read_put"></a>
-
-## PUT 标记会话已读
-
-PUT /agent/sessions/{sessionId}/mark-read
-
-将会话状态从 `completed_unread` 标记为已读，并恢复为 `idle`。通常在前端打开会话详情、消除未读提示时调用。
-
-请求说明：
-- 需要登录 Cookie `accessToken`。
-- 仅允许操作当前登录用户自己的会话。
-- 无请求体，只使用路径参数 `sessionId`。
-
-返回说明：
-- 返回更新后的 `AgentSessionResponse`。
-- 如果会话不存在或不属于当前用户，会返回参数错误。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 | Sessionid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdswitchAgentMode_agent_sessions__sessionId__mode_put"></a>
-
-## PUT 切换 Agent 模式
-
-PUT /agent/sessions/{sessionId}/mode
-
-切换指定 Agent 会话的运行模式，既会持久化到数据库，也会立即对当前运行时生效，无需重建会话。
-
-请求体：
-```json
-{
-  "mode": "read_only"
-}
-```
-
-`mode` 可选值：
-- `read_only`：只读模式，只允许低风险只读工具。
-- `plan`：规划模式，只生成方案，不直接执行。
-- `agent`：标准模式，按默认安全策略执行。
-- `break_glass`：紧急模式，允许更激进执行，但会被强制审计。
-
-注意事项：
-- 需要登录 Cookie `accessToken`。
-- 仅允许操作当前登录用户自己的会话。
-- 传入非法模式会返回参数错误。
-- 返回更新后的 `AgentSessionResponse`。
+记录经验包命中/有用/无用反馈并重算 qualityScore。需要 accessToken Cookie。action 只能是 hit、useful、useless；不存在时返回业务错误。
 
 > Body 请求参数
 
 ```json
 {
-  "mode": "string"
+  "action": "hit"
 }
 ```
 
@@ -8105,1960 +18853,508 @@ PUT /agent/sessions/{sessionId}/mode
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|sessionId|path|string| 是 | Sessionid|none|
-|body|body|[AgentModeSwitch](#schemaagentmodeswitch)| 是 | AgentModeSwitch|none|
+|packId|path|integer| 是 ||经验包主键|
+|body|body|object| 是 ||none|
+|» action|body|string| 是 ||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|» action|hit|
+|» action|useful|
+|» action|useless|
 
 > 返回示例
 
 > 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-# 管理员特权审批
-
-<a id="opIdget_code_admin_elevation_codes__code__get"></a>
-
-## GET 查询特权审批码
-
-GET /admin/elevation/codes/{code}
-
-查询单个特权审批码详情，供本机 CLI 或运维审批页展示。
-
-访问限制：
-- 仅允许从 `127.0.0.1` / `::1` / `localhost` 发起请求。
-- 必须携带 `Authorization: Bearer <token>`。
-- Bearer Token 需与服务器 `NDLM_ADMIN_TOKEN_PATH`（默认 `/etc/nereus/admin_token`）中的内容一致。
-
-返回内容通常包含：
-- code 当前状态（如 `pending` / `approved` / `rejected`）
-- sessionId、requestType、reason、commands、taskId 等审批上下文
-
-如果特权码不存在，业务层会返回 `code=0` 和错误消息，而不是 404。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|code|path|string| 是 | Code|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdlist_pending_admin_elevation_pending_get"></a>
-
-## GET 查询待审批特权码列表
-
-GET /admin/elevation/pending
-
-列出所有待审批的特权请求，主要供 `sudo nereus` 或管理员本机界面查看。
-
-访问限制：
-- 仅允许本机访问。
-- 必须携带 `/etc/nereus/admin_token` 对应的 Bearer Token。
-
-返回说明：
-- `data` 为待审批 code 数组。
-- 每项通常包含 code、sessionId、requestType、reason、创建时间、关联任务或命令摘要。
-- 仅返回状态仍为 `pending` 的审批项。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-
-### 返回数据结构
-
-<a id="opIdapprove_code_admin_elevation_approve_post"></a>
-
-## POST 批准特权请求
-
-POST /admin/elevation/approve
-
-批准一个待审批的特权码，并在需要时联动更新定时任务预授权状态。
-
-请求体：
-```json
-{
-  "code": "NGA7-K3X9",
-  "approved_by": "admin"
-}
-```
-
-关键行为：
-- 仅允许本机访问，并要求 Bearer Token 鉴权。
-- 普通特权请求会签发内部 token，允许 Agent 继续执行后续高权限操作。
-- 如果 `request_type=scheduled_task_policy` 且存在 `taskId`，会同时把对应定时任务从 `pending_approval` 更新为 `active`，并注册调度器任务。
-- 审批完成后会向关联 Agent 会话推送 WebSocket 事件 `elevation.resolved`，其中 `status=approved`。
-
-响应字段重点：
-- `status`：固定为 `approved`
-- `request_type`、`code`、`token_id`、`session_id`
-- 定时任务场景下还会返回 `taskId`、`max_ops`、`allowed_commands`
-
-> Body 请求参数
-
-```json
-{}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|body|body|object| 是 | Body|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdreject_code_admin_elevation_reject_post"></a>
-
-## POST 拒绝特权请求
-
-POST /admin/elevation/reject
-
-拒绝一个待审批的特权码，并向前端/Agent 推送拒绝结果。
-
-请求体：
-```json
-{
-  "code": "NGA7-K3X9",
-  "reason": "操作风险过高"
-}
-```
-
-关键行为：
-- 仅允许本机访问，并要求 Bearer Token 鉴权。
-- 如果对应请求属于定时任务预授权（`request_type=scheduled_task_policy`），会把任务审批状态标记为 `rejected`，并移除调度器 job。
-- 会向关联 Agent 会话推送 `elevation.resolved` 事件，其中 `status=rejected`。
-
-响应字段重点：
-- `status`：固定为 `rejected`
-- `code`
-- `request_type`
-- `taskId`（若为定时任务审批）
-
-> Body 请求参数
-
-```json
-{}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|body|body|object| 是 | Body|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdrevoke_token_admin_elevation_revoke_post"></a>
-
-## POST 吊销特权 Token
-
-POST /admin/elevation/revoke
-
-吊销一个已经签发的内部特权 token，使其后续不能再用于高权限操作。
-
-请求体：
-```json
-{
-  "token_id": "..."
-}
-```
-
-访问限制：
-- 仅允许本机访问。
-- 必须使用 `/etc/nereus/admin_token` 对应的 Bearer Token。
-
-返回说明：
-- 成功时 `data.status=revoked`。
-- 如果 `token_id` 不存在或已经过期，业务层会返回失败消息。
-
-> Body 请求参数
-
-```json
-{}
-```
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|body|body|object| 是 | Body|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdaudit_code_admin_elevation_audit__code__get"></a>
-
-## GET 审计特权请求
-
-GET /admin/elevation/audit/{code}
-
-对一个待审批的特权码执行 AI/规则结合的安全审计，返回结构化风险报告，供 CLI 富文本展示。
-
-访问限制：
-- 仅允许本机访问。
-- 必须使用 Bearer Token 鉴权。
-
-审计逻辑：
-- code 不存在时返回业务失败。
-- code 状态不是 `pending` 时也不会继续审计。
-- 若 `request_type=scheduled_task_policy`，不会读取命令脚本，而是返回一份针对预授权策略的中风险提示。
-- 若存在 `script_path` 且文件可读，优先审计脚本内容；否则审计 `commands` 列表。
-- 审计异常时会降级为规则扫描，并返回 `risk_level=MEDIUM` 的兜底报告。
-
-返回重点：
-- `data.code`
-- `data.audit.risk_level`
-- `data.audit.summary`
-- `data.audit.findings`
-- `data.audit.dangerous_commands`
-- `data.audit.ai_advice`
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|code|path|string| 是 | Code|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdlist_history_admin_elevation_history_get"></a>
-
-## GET 查询特权审批历史
-
-GET /admin/elevation/history
-
-查询历史审批记录，默认最多返回 50 条。
-
-访问限制：
-- 仅允许本机访问。
-- 必须使用 Bearer Token 鉴权。
-
-查询参数：
-- `limit`：返回条数上限，默认 `50`。
-
-返回说明：
-- `data` 为历史记录数组。
-- 通常用于排查某个 code 的审批流转、签发 token、批准/拒绝人和时间。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|limit|query|integer| 否 | Limit|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-# ScheduledTask
-
-<a id="opIdcreateTask_scheduled_tasks_post"></a>
-
-## POST 创建定时任务
-
-POST /scheduled-tasks
-
-创建一个新的定时任务。到达 `cronExpression` 指定时间后，后端会通过后台 Agent 执行 `taskDescription`。
-
-请求体关键字段：
-- `name`：任务名称，1-100 字符。
-- `cronExpression`：5 段 crontab 表达式，例如 `0 3 * * *`。
-- `taskDescription`：真正交给后台 Agent 执行的任务描述。
-- `approvalPolicy`：可选。传入后任务不会立刻启用，而是进入 `pending_approval`，等待管理员在服务器侧批准。
-
-`approvalPolicy` 支持的关键字段：
-- `allowedTools`：允许自动执行的工具名数组。
-- `allowedPaths` / `deniedPaths`：允许/拒绝的路径前缀。
-- `allowedPrivilegedCommands`：允许的特权命令白名单。
-- `ttlSeconds`：审批码有效期，默认 3600 秒。
-- `maxRuns`：批准后的最大授权次数，默认 100。
-
-状态流转：
-- 不传 `approvalPolicy`：创建后直接为 `active`，并注册到调度器。
-- 传 `approvalPolicy`：创建后为 `pending_approval`，响应中会返回 `approvalCode`。管理员批准后才会切换为 `active`。
-
-> Body 请求参数
 
 ```json
 {
-  "name": "string",
-  "cronExpression": "string",
-  "taskDescription": "string",
-  "approvalPolicy": {
-    "allowedTools": [
-      "string"
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "title": "Nginx 证书续期",
+    "category": "deployment",
+    "osType": "通用",
+    "tags": [
+      "nginx",
+      "ssl"
     ],
-    "allowedPaths": [
-      "string"
+    "deploymentDoc": "# 操作步骤\n1. 检查 nginx -t",
+    "stages": [
+      {
+        "name": "检查",
+        "goal": "确认配置有效",
+        "steps": [
+          "nginx -t"
+        ],
+        "verify": "返回 successful",
+        "pitfallsRef": []
+      }
     ],
-    "deniedPaths": [
-      "string"
-    ],
-    "allowedPrivilegedCommands": [
-      "string"
-    ],
-    "ttlSeconds": 3600,
-    "maxRuns": 100
+    "pitfalls": [],
+    "earlyWarnings": [],
+    "riskLevel": "medium",
+    "status": "enabled",
+    "source": "human",
+    "version": 1,
+    "sourceSessionId": null,
+    "hitCount": 0,
+    "usefulCount": 0,
+    "uselessCount": 0,
+    "qualityScore": 100,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z",
+    "attachments": []
   }
 }
 ```
 
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|body|body|[ScheduledTaskCreate](#schemascheduledtaskcreate)| 是 | ScheduledTaskCreate|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdlistTasks_scheduled_tasks_get"></a>
-
-## GET 查询定时任务列表
-
-GET /scheduled-tasks
-
-查询定时任务列表。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-查询参数：
-- `status`：可按状态筛选，如 `active`、`paused`、`pending_approval`。
-- `includeDeleted`：是否包含已软删除任务，默认 `false`。
-
-返回说明：
-- `data.total` 为数量。
-- `data.items` 为 `ScheduledTaskResponse` 数组。
-- 当前实现按系统范围查询，不再按当前用户过滤。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|status|query|any| 否 | Status|none|
-|includeDeleted|query|boolean| 否 | Includedeleted|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdlistAllTasks_scheduled_tasks_all_get"></a>
-
-## GET 查询全部定时任务
-
-GET /scheduled-tasks/all
-
-查询全部定时任务，默认包含已删除任务，适合后台管理页使用。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-与 `GET /scheduled-tasks` 的区别：
-- 本接口 `includeDeleted` 默认值为 `true`。
-- 常用于查看 `active`、`paused`、`pending_approval`、`deleted` 等全部状态。
-
-查询参数：
-- `status`：按状态过滤。
-- `includeDeleted`：默认 `true`，可显式改为 `false`。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|status|query|any| 否 | Status|none|
-|includeDeleted|query|boolean| 否 | Includedeleted|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdlistPendingApprovalTasks_scheduled_tasks_pending_approval_get"></a>
-
-## GET 查询待审批定时任务
-
-GET /scheduled-tasks/pending-approval
-
-返回所有仍处于 `pending_approval` 状态的定时任务。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-用途：
-- 管理页集中展示等待 CLI/管理员批准的任务。
-- 结合 `approvalCode`、`approvalStatus`、`approvalPolicy` 字段展示审批进度。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-
-### 返回数据结构
-
-<a id="opIdgetRun_scheduled_tasks_runs__runId__get"></a>
-
-## GET 查询定时任务执行记录
-
-GET /scheduled-tasks/runs/{runId}
-
-根据执行记录 ID 查询单次定时任务运行结果。
-
-路径参数：
-- `runId`：执行记录 ID。
-
-返回说明：
-- 返回 `ScheduledTaskRunResponse`。
-- 重点字段包括 `sessionId`、`status`、`startedAt`、`finishedAt`、`resultSummary`、`errorMessage`、`tokenUsage`。
-- 如果 `sessionId` 不为空，可继续通过 Agent 会话、消息、Trace 接口追踪完整执行过程。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|runId|path|integer| 是 | Runid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdgetApproval_scheduled_tasks__taskId__approval_get"></a>
-
-## GET 查询任务审批详情
-
-GET /scheduled-tasks/{taskId}/approval
-
-查询某个定时任务的审批信息。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-返回字段重点：
-- `taskId`
-- `status`
-- `approvalPolicy`
-- `approvalCode`
-- `approvalStatus`
-- `approvalApprovedAt`
-- `approvalApprovedBy`
-- `approvalTokenId`
-- `approvalRejectedReason`
-
-适用于前端展示 `sudo nereus approve <approvalCode>` 提示、审批结果和拒绝原因。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdreissueApproval_scheduled_tasks__taskId__approval_reissue_post"></a>
-
-## POST 重新签发任务审批码
-
-POST /scheduled-tasks/{taskId}/approval/reissue
-
-为 `pending_approval` 状态的定时任务重新生成审批码。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-调用限制：
-- 只有状态为 `pending_approval` 的任务可以调用。
-- 任务必须存在 `approvalPolicy`，否则会返回业务错误。
-
-关键行为：
-- 旧的待审批 code 会失效。
-- 会生成新的 `approvalCode` 并写回任务记录。
-- 返回更新后的 `ScheduledTaskResponse`。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdgetTask_scheduled_tasks__taskId__get"></a>
-
-## GET 查询单个定时任务
-
-GET /scheduled-tasks/{taskId}
-
-查询单个定时任务详情。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-返回说明：
-- 返回 `ScheduledTaskResponse`。
-- 如果任务已软删除，当前实现会按“不存在”处理。
-- 可结合 `nextRunAt`、`lastRunAt`、`approvalStatus` 等字段判断调度与审批状态。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdupdateTask_scheduled_tasks__taskId__put"></a>
-
-## PUT 更新定时任务
-
-PUT /scheduled-tasks/{taskId}
-
-部分更新定时任务，`name`、`cronExpression`、`taskDescription`、`approvalPolicy` 均可按需传入。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-关键规则：
-- 如果更新了 `cronExpression`，后端会重新校验 5 段 crontab 格式。
-- 如果本次请求传入了非空 `approvalPolicy`，任务会重新进入 `pending_approval`，并清空此前审批结果、移除调度器 job，然后重新签发 `approvalCode`。
-- 如果只是普通字段更新，后端会刷新调度器中的任务定义。
-- 如果请求体为空，接口会直接返回当前任务对象。
-
-> Body 请求参数
+> 401 Response
 
 ```json
 {
-  "name": "string",
-  "cronExpression": "string",
-  "taskDescription": "string",
-  "approvalPolicy": {
-    "allowedTools": [
-      "string"
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» title|string|true|none||none|
+|»» category|string|true|none||none|
+|»» osType|string|true|none||none|
+|»» tags|[string]|false|none||none|
+|»» deploymentDoc|string|true|none||none|
+|»» stages|[any]|false|none||none|
+|»» pitfalls|[any]|false|none||none|
+|»» earlyWarnings|[any]|false|none||none|
+|»» riskLevel|string|true|none||none|
+|»» status|string|true|none||none|
+|»» source|string|true|none||none|
+|»» version|integer|true|none||none|
+|»» sourceSessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» hitCount|integer|true|none||none|
+|»» usefulCount|integer|true|none||none|
+|»» uselessCount|integer|true|none||none|
+|»» qualityScore|integer|true|none||none|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|category|deployment|
+|category|fault|
+|category|optimization|
+|category|security|
+|category|negative|
+|riskLevel|low|
+|riskLevel|medium|
+|riskLevel|high|
+|status|enabled|
+|status|disabled|
+|source|ai|
+|source|human|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdimportPack_ops_experience_import_post"></a>
+
+## POST 导入运维经验包
+
+POST /ops-experience/import
+
+导入 multipart/form-data ZIP 经验包。需要 accessToken Cookie；字段 file 必填。服务端校验 manifest schemaVersion、逐附件 sha256 并按哈希去重后落库/落盘，重复导入会创建新包记录但复用附件文件。ZIP 非法或校验失败返回业务错误。
+
+> Body 请求参数
+
+```yaml
+file: null
+
+```
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|body|body|object| 是 ||none|
+|» file|body|file| 是 ||经验包 ZIP 文件|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "title": "Nginx 证书续期",
+    "category": "deployment",
+    "osType": "通用",
+    "tags": [
+      "nginx",
+      "ssl"
     ],
-    "allowedPaths": [
-      "string"
+    "deploymentDoc": "# 操作步骤\n1. 检查 nginx -t",
+    "stages": [
+      {
+        "name": "检查",
+        "goal": "确认配置有效",
+        "steps": [
+          "nginx -t"
+        ],
+        "verify": "返回 successful",
+        "pitfallsRef": []
+      }
     ],
-    "deniedPaths": [
-      "string"
-    ],
-    "allowedPrivilegedCommands": [
-      "string"
-    ],
-    "ttlSeconds": 3600,
-    "maxRuns": 100
+    "pitfalls": [],
+    "earlyWarnings": [],
+    "riskLevel": "medium",
+    "status": "enabled",
+    "source": "human",
+    "version": 1,
+    "sourceSessionId": null,
+    "hitCount": 0,
+    "usefulCount": 0,
+    "uselessCount": 0,
+    "qualityScore": 100,
+    "createdAt": "2026-08-17T10:00:00Z",
+    "updatedAt": "2026-08-17T10:00:00Z",
+    "attachments": []
   }
 }
 ```
 
-### 请求参数
+> 401 Response
 
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-|body|body|[ScheduledTaskUpdate](#schemascheduledtaskupdate)| 是 | ScheduledTaskUpdate|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIddeleteTask_scheduled_tasks__taskId__delete"></a>
-
-## DELETE 删除定时任务
-
-DELETE /scheduled-tasks/{taskId}
-
-软删除指定定时任务。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-删除行为：
-- 后端不会物理删除记录，而是把 `status` 置为 `deleted`。
-- `nextRunAt` 会被清空。
-- 调度器中的 job 会被移除。
-
-成功时外层响应 `data` 为 `null`。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdpauseTask_scheduled_tasks__taskId__pause_post"></a>
-
-## POST 暂停定时任务
-
-POST /scheduled-tasks/{taskId}/pause
-
-暂停指定定时任务。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-执行效果：
-- 将任务状态改为 `paused`。
-- 清空 `nextRunAt`。
-- 从调度器移除对应 job。
-- 返回更新后的 `ScheduledTaskResponse`。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdresumeTask_scheduled_tasks__taskId__resume_post"></a>
-
-## POST 恢复定时任务
-
-POST /scheduled-tasks/{taskId}/resume
-
-恢复一个已暂停或可重新启用的定时任务。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-执行效果：
-- 将任务状态置为 `active`。
-- 重新注册调度器 job。
-- 返回更新后的 `ScheduledTaskResponse`，其中通常会重新计算 `nextRunAt`。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdtriggerTask_scheduled_tasks__taskId__trigger_post"></a>
-
-## POST 手动触发定时任务
-
-POST /scheduled-tasks/{taskId}/trigger
-
-立即手动执行一次指定定时任务，并等待本次后台 Agent 执行完成后返回。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-执行规则：
-- `deleted` 状态任务不可执行。
-- `pending_approval` 状态任务会直接返回业务错误，提示仍在等待 CLI 审批。
-- 后端会先创建一条运行记录，再通过 `AgentGatewayService.createEphemeralRun(...)` 发起一次临时 Agent 会话。
-
-返回说明：
-- 返回 `ScheduledTaskRunResponse`。
-- `sessionId` 不为空时，可继续通过 Agent 会话/消息/Trace 接口查看完整执行过程。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdlistRuns_scheduled_tasks__taskId__runs_get"></a>
-
-## GET 查询任务运行历史
-
-GET /scheduled-tasks/{taskId}/runs
-
-查询指定定时任务最近的执行记录列表。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-查询参数：
-- `limit`：返回条数上限，默认 `50`，最大 `200`。
-
-返回说明：
-- `data.total` 为返回记录数。
-- `data.items` 为 `ScheduledTaskRunResponse` 数组。
-- 每条记录都包含运行状态、开始/结束时间、摘要、错误信息、token 用量等信息。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|taskId|path|integer| 是 | Taskid|none|
-|limit|query|integer| 否 | Limit|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-# Inspection
-
-<a id="opIdlistReports_inspection_reports_get"></a>
-
-## GET 查询巡检报告列表
-
-GET /inspection/reports
-
-分页查询自动巡检报告列表。
-
-查询参数：
-- `page`：页码，默认 `1`。
-- `pageSize`：每页条数，默认 `20`，最大 `200`。
-
-返回说明：
-- `data.total` 为总数。
-- `data.items` 为 `InspectionReportResponse` 数组。
-- 每条报告包含 `status`、`summary`、`findings`、`durationMs`、`errorMessage`、`sessionId` 等字段。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|page|query|integer| 否 | Page|none|
-|pageSize|query|integer| 否 | Pagesize|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdlatestReport_inspection_reports_latest_get"></a>
-
-## GET 查询最新巡检报告
-
-GET /inspection/reports/latest
-
-返回最近一条巡检报告。
-
-返回说明：
-- 有报告时返回单个 `InspectionReportResponse`。
-- 尚无巡检记录时，`data` 可能为 `null`。
-- 可用于首页或告警卡片快速展示最近一次巡检结果。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-
-### 返回数据结构
-
-<a id="opIdgetReport_inspection_reports__reportId__get"></a>
-
-## GET 查询单个巡检报告
-
-GET /inspection/reports/{reportId}
-
-根据报告 ID 查询完整巡检报告。
-
-路径参数：
-- `reportId`：巡检报告 ID。
-
-返回说明：
-- 返回 `InspectionReportResponse`。
-- `fullReport` 为 Agent 原始完整报告文本。
-- `findings` 为后端从报告尾部 JSON 中提取出的结构化问题列表。
-- 不存在的报告会返回参数错误。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-|reportId|path|integer| 是 | Reportid|none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
-
-### 返回数据结构
-
-状态码 **422**
-
-*HTTPValidationError*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
-
-<a id="opIdtriggerInspection_inspection_trigger_post"></a>
-
-## POST 手动触发巡检
-
-POST /inspection/trigger
-
-立即发起一次系统巡检，并等待后台 Agent 执行完成后返回本次巡检报告。
-
-鉴权：
-- 需要登录 Cookie `accessToken`。
-
-执行逻辑：
-- 后端会读取 `workspace/inspection.md` 作为巡检配置文档；若文件不存在，会使用默认兜底提示。
-- 调用 `AgentGatewayService.createEphemeralRun(...)`，标题固定为“自动巡检”，并自动开启核心工具集。
-- 完成后会保存 `summary`、`findings`、`fullReport`、`durationMs`、`errorMessage` 等数据。
-
-返回说明：
-- 返回新创建的 `InspectionReportResponse`。
-- `sessionId` 不为空时，可继续通过 Agent 会话、消息、Trace 接口查看巡检执行细节。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-
-### 返回数据结构
-
-<a id="opIdgetConfig_inspection_config_get"></a>
-
-## GET 查询巡检调度配置
-
-GET /inspection/config
-
-查询自动巡检当前的调度配置。
-
-返回内容由调度器 `AgentScheduler` 提供，通常用于前端展示：
-- 是否启用自动巡检
-- 当前巡检间隔（分钟）
-- 下一次计划执行时间等调度信息
-
-本接口不要求用户登录。
-
-### 请求参数
-
-|名称|位置|类型|必选|中文名|说明|
-|---|---|---|---|---|---|
-|accessToken|cookie|string| 否 ||none|
-|refreshToken|cookie|string| 否 ||none|
-
-> 返回示例
-
-> 200 Response
-
-```json
-null
-```
-
-### 返回结果
-
-|状态码|状态码含义|说明|数据模型|
-|---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-
-### 返回数据结构
-
-<a id="opIdupdateConfig_inspection_config_put"></a>
-
-## PUT 更新巡检调度配置
-
-PUT /inspection/config
-
-更新自动巡检的执行间隔。
-
-请求体：
 ```json
 {
-  "intervalMinutes": 30
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
 }
 ```
 
-规则说明：
-- `intervalMinutes` 取值范围为 `1` 到 `1440`。
-- 后端会调用调度器 `setInspectionInterval(...)` 立即生效。
-- 成功后返回更新后的最新巡检配置。
+> 422 Response
 
-本接口当前不要求用户登录。
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|true|none||none|
+|»» title|string|true|none||none|
+|»» category|string|true|none||none|
+|»» osType|string|true|none||none|
+|»» tags|[string]|false|none||none|
+|»» deploymentDoc|string|true|none||none|
+|»» stages|[any]|false|none||none|
+|»» pitfalls|[any]|false|none||none|
+|»» earlyWarnings|[any]|false|none||none|
+|»» riskLevel|string|true|none||none|
+|»» status|string|true|none||none|
+|»» source|string|true|none||none|
+|»» version|integer|true|none||none|
+|»» sourceSessionId|any|false|none||none|
+
+*anyOf*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|string|false|none||none|
+
+*or*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»»» *anonymous*|null|false|none||none|
+
+*continued*
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|»» hitCount|integer|true|none||none|
+|»» usefulCount|integer|true|none||none|
+|»» uselessCount|integer|true|none||none|
+|»» qualityScore|integer|true|none||none|
+|»» createdAt|string(date-time)|true|none||none|
+|»» updatedAt|string(date-time)|true|none||none|
+|»» attachments|[object]|false|none||none|
+|»»» id|integer|false|none||none|
+|»»» packId|integer|false|none||none|
+|»»» filename|string|false|none||none|
+|»»» fileType|string|false|none||none|
+|»»» storagePath|string|false|none||none|
+|»»» sha256|string|false|none||none|
+|»»» size|integer|false|none||none|
+|»»» arch|string|false|none||none|
+|»»» osType|string|false|none||none|
+|»»» createdAt|string(date-time)|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|category|deployment|
+|category|fault|
+|category|optimization|
+|category|security|
+|category|negative|
+|riskLevel|low|
+|riskLevel|medium|
+|riskLevel|high|
+|status|enabled|
+|status|disabled|
+|source|ai|
+|source|human|
+|fileType|script|
+|fileType|binary|
+|fileType|doc|
+|fileType|archive|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIdexportPack_ops_experience_packs_packId_export_get"></a>
+
+## GET 导出运维经验包
+
+GET /ops-experience/packs/{packId}/export
+
+导出经验包为 ZIP 下载。需要 accessToken Cookie。packId 不存在时返回业务错误；成功响应 media_type=application/zip，Content-Disposition 同时提供 ASCII 和 UTF-8 文件名，包含 manifest、deployment.md 和附件。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|packId|path|integer| 是 ||经验包主键|
+
+> 返回示例
+
+> 200 Response
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|返回导出的经验包 ZIP；Content-Disposition 提供下载文件名|string|
+
+<a id="opIdknowledgeSummary_ops_experience_knowledge_summary_get"></a>
+
+## GET 读取经验知识摘要
+
+GET /ops-experience/knowledge-summary
+
+读取启用中经验包的紧凑摘要文本。需要 accessToken Cookie。limit 1..50 默认 20；经验库为空时返回冷启动指引，查询异常时返回空字符串，不阻塞会话。
+
+### 请求参数
+
+|名称|位置|类型|必选|中文名|说明|
+|---|---|---|---|---|---|
+|accessToken|cookie|string| 否 ||none|
+|refreshToken|cookie|string| 否 ||none|
+|limit|query|integer| 否 ||摘要条数，1..50，默认 20|
+
+> 返回示例
+
+> 200 Response
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": "[deployment] Nginx 证书续期 | nginx,ssl | 检查 certbot"
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
+```
+
+### 返回结果
+
+|状态码|状态码含义|说明|数据模型|
+|---|---|---|---|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
+
+### 返回数据结构
+
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|string|true|none||none|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
+状态码 **422**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+
+<a id="opIduploadAttachment_ops_experience_packs_packId_attachments_post"></a>
+
+## POST 上传经验包附件
+
+POST /ops-experience/packs/{packId}/attachments
+
+向已有经验包上传 multipart/form-data 附件。需要 accessToken Cookie；file 必填，fileType 可选 script|binary|doc|archive（默认 doc），arch/osType 默认 通用。文件名不能含路径分隔符；同名同内容幂等，同名不同内容拒绝；按 sha256 全局去重。
 
 > Body 请求参数
 
-```json
-{
-  "intervalMinutes": 1
-}
+```yaml
+fileType: doc
+arch: loongarch64
+osType: 麒麟
+
 ```
 
 ### 请求参数
@@ -10067,1187 +19363,116 @@ PUT /inspection/config
 |---|---|---|---|---|---|
 |accessToken|cookie|string| 否 ||none|
 |refreshToken|cookie|string| 否 ||none|
-|body|body|[InspectionConfigUpdate](#schemainspectionconfigupdate)| 是 | InspectionConfigUpdate|none|
+|packId|path|integer| 是 ||经验包主键|
+|body|body|object| 是 ||none|
+|» file|body|file| 是 ||附件内容|
+|» fileType|body|string| 否 ||script|binary|doc|archive|
+|» arch|body|string| 否 ||架构标签|
+|» osType|body|string| 否 ||系统标签|
 
 > 返回示例
 
 > 200 Response
 
 ```json
-null
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "id": 10,
+    "packId": 1,
+    "filename": "runbook.md",
+    "fileType": "doc",
+    "storagePath": "1/runbook.md",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 128,
+    "arch": "通用",
+    "osType": "通用",
+    "createdAt": "2026-08-17T10:00:00Z"
+  }
+}
+```
+
+> 401 Response
+
+```json
+{
+  "code": 40101,
+  "msg": "未携带accessToken",
+  "data": null
+}
+```
+
+> 422 Response
+
+```json
+{
+  "detail": [
+    {
+      "loc": [
+        "body"
+      ],
+      "msg": "参数校验失败",
+      "type": "value_error"
+    }
+  ]
+}
 ```
 
 ### 返回结果
 
 |状态码|状态码含义|说明|数据模型|
 |---|---|---|---|
-|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|Successful Response|Inline|
-|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Validation Error|[HTTPValidationError](#schemahttpvalidationerror)|
+|200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|none|Inline|
+|401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|缺少或非法 accessToken Cookie；GlobalInterceptor 返回 code=40101|Inline|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|FastAPI/Pydantic 参数校验失败；data 通常为空或包含 validation details|Inline|
 
 ### 返回数据结构
 
+状态码 **200**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
+|»» id|integer|false|none||none|
+|»» packId|integer|false|none||none|
+|»» filename|string|false|none||none|
+|»» fileType|string|false|none||none|
+|»» storagePath|string|false|none||none|
+|»» sha256|string|false|none||none|
+|»» size|integer|false|none||none|
+|»» arch|string|false|none||none|
+|»» osType|string|false|none||none|
+|»» createdAt|string(date-time)|false|none||none|
+
+#### 枚举值
+
+|属性|值|
+|---|---|
+|fileType|script|
+|fileType|binary|
+|fileType|doc|
+|fileType|archive|
+
+状态码 **401**
+
+|名称|类型|必选|约束|中文名|说明|
+|---|---|---|---|---|---|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|null|true|none||none|
+
 状态码 **422**
 
-*HTTPValidationError*
-
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
-|» detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-|»» ValidationError|[ValidationError](#schemavalidationerror)|false|none|ValidationError|none|
-|»»» loc|[anyOf]|true|none|Location|none|
-
-*anyOf*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|string|false|none||none|
-
-*or*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»»» *anonymous*|integer|false|none||none|
-
-*continued*
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|»»» msg|string|true|none|Message|none|
-|»»» type|string|true|none|Error Type|none|
-|»»» input|any|false|none|Input|none|
-|»»» ctx|object|false|none|Context|none|
+|» code|integer|true|none||业务码，1 成功，0 业务失败，40101/40102 表示 Cookie 鉴权失败|
+|» msg|string|true|none||面向用户的提示信息|
+|» data|object|true|none||none|
 
 # 数据模型
-
-<h2 id="tocS_AgentLlmProfileBatchCreate">AgentLlmProfileBatchCreate</h2>
-
-<a id="schemaagentllmprofilebatchcreate"></a>
-<a id="schema_AgentLlmProfileBatchCreate"></a>
-<a id="tocSagentllmprofilebatchcreate"></a>
-<a id="tocsagentllmprofilebatchcreate"></a>
-
-```json
-{
-  "credentialId": 1,
-  "models": [
-    "string"
-  ],
-  "namePrefix": "string",
-  "maxTokens": 4096,
-  "contextWindow": 1048576,
-  "temperature": 0.1,
-  "retryCount": 3,
-  "retryDelay": 2,
-  "isDefaultFirst": false,
-  "isActive": true,
-  "description": "string"
-}
-
-```
-
-AgentLlmProfileBatchCreate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|credentialId|integer|true|none|Credentialid|none|
-|models|[string]|true|none|Models|none|
-|namePrefix|any|false|none|Nameprefix|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|maxTokens|integer|false|none|Maxtokens|none|
-|contextWindow|integer|false|none|Contextwindow|none|
-|temperature|number|false|none|Temperature|none|
-|retryCount|integer|false|none|Retrycount|none|
-|retryDelay|number|false|none|Retrydelay|none|
-|isDefaultFirst|boolean|false|none|Isdefaultfirst|none|
-|isActive|boolean|false|none|Isactive|none|
-|description|any|false|none|Description|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_AgentLlmProfileCreate">AgentLlmProfileCreate</h2>
-
-<a id="schemaagentllmprofilecreate"></a>
-<a id="schema_AgentLlmProfileCreate"></a>
-<a id="tocSagentllmprofilecreate"></a>
-<a id="tocsagentllmprofilecreate"></a>
-
-```json
-{
-  "name": "string",
-  "credentialId": 1,
-  "model": "string",
-  "maxTokens": 4096,
-  "contextWindow": 1048576,
-  "temperature": 0.1,
-  "retryCount": 3,
-  "retryDelay": 2,
-  "isDefault": false,
-  "isActive": true,
-  "description": "string"
-}
-
-```
-
-AgentLlmProfileCreate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|name|string|true|none|Name|none|
-|credentialId|integer|true|none|Credentialid|none|
-|model|string|true|none|Model|none|
-|maxTokens|integer|false|none|Maxtokens|none|
-|contextWindow|integer|false|none|Contextwindow|none|
-|temperature|number|false|none|Temperature|none|
-|retryCount|integer|false|none|Retrycount|none|
-|retryDelay|number|false|none|Retrydelay|none|
-|isDefault|boolean|false|none|Isdefault|none|
-|isActive|boolean|false|none|Isactive|none|
-|description|any|false|none|Description|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_AgentLlmProfileUpdate">AgentLlmProfileUpdate</h2>
-
-<a id="schemaagentllmprofileupdate"></a>
-<a id="schema_AgentLlmProfileUpdate"></a>
-<a id="tocSagentllmprofileupdate"></a>
-<a id="tocsagentllmprofileupdate"></a>
-
-```json
-{
-  "name": "string",
-  "credentialId": 1,
-  "model": "string",
-  "maxTokens": 1,
-  "contextWindow": 1,
-  "temperature": 2,
-  "retryCount": 0,
-  "retryDelay": 0,
-  "isDefault": true,
-  "isActive": true,
-  "description": "string"
-}
-
-```
-
-AgentLlmProfileUpdate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|name|any|false|none|Name|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|credentialId|any|false|none|Credentialid|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|model|any|false|none|Model|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|maxTokens|any|false|none|Maxtokens|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|contextWindow|any|false|none|Contextwindow|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|temperature|any|false|none|Temperature|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|retryCount|any|false|none|Retrycount|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|retryDelay|any|false|none|Retrydelay|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|isDefault|any|false|none|Isdefault|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|boolean|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|isActive|any|false|none|Isactive|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|boolean|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|description|any|false|none|Description|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_AgentModeSwitch">AgentModeSwitch</h2>
-
-<a id="schemaagentmodeswitch"></a>
-<a id="schema_AgentModeSwitch"></a>
-<a id="tocSagentmodeswitch"></a>
-<a id="tocsagentmodeswitch"></a>
-
-```json
-{
-  "mode": "string"
-}
-
-```
-
-AgentModeSwitch
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|mode|string|true|none|Mode|目标模式: read_only / plan / agent / break_glass|
-
-<h2 id="tocS_AgentModelSwitch">AgentModelSwitch</h2>
-
-<a id="schemaagentmodelswitch"></a>
-<a id="schema_AgentModelSwitch"></a>
-<a id="tocSagentmodelswitch"></a>
-<a id="tocsagentmodelswitch"></a>
-
-```json
-{
-  "profileId": 0
-}
-
-```
-
-AgentModelSwitch
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|profileId|integer|true|none|Profileid|none|
-
-<h2 id="tocS_AgentSessionCreate">AgentSessionCreate</h2>
-
-<a id="schemaagentsessioncreate"></a>
-<a id="schema_AgentSessionCreate"></a>
-<a id="tocSagentsessioncreate"></a>
-<a id="tocsagentsessioncreate"></a>
-
-```json
-{
-  "title": "新 Agent 会话",
-  "mode": "agent",
-  "profileId": 1,
-  "toolSource": "current_mcp",
-  "safetyPolicy": "default",
-  "mcpServers": [
-    {
-      "name": "string",
-      "command": [
-        "string"
-      ],
-      "cwd": "string"
-    }
-  ]
-}
-
-```
-
-AgentSessionCreate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|title|string|false|none|Title|none|
-|mode|string|false|none|Mode|none|
-|profileId|any|false|none|Profileid|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|toolSource|string|false|none|Toolsource|none|
-|safetyPolicy|string|false|none|Safetypolicy|none|
-|mcpServers|any|false|none|Mcpservers|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|[[McpServerSpec](#schemamcpserverspec)]|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-#### 枚举值
-
-|属性|值|
-|---|---|
-|toolSource|current_mcp|
-|toolSource|stdio|
-
-<h2 id="tocS_AgentToolSourceSwitch">AgentToolSourceSwitch</h2>
-
-<a id="schemaagenttoolsourceswitch"></a>
-<a id="schema_AgentToolSourceSwitch"></a>
-<a id="tocSagenttoolsourceswitch"></a>
-<a id="tocsagenttoolsourceswitch"></a>
-
-```json
-{
-  "toolSource": "current_mcp",
-  "mcpServers": [
-    {
-      "name": "string",
-      "command": [
-        "string"
-      ],
-      "cwd": "string"
-    }
-  ]
-}
-
-```
-
-AgentToolSourceSwitch
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|toolSource|string|true|none|Toolsource|none|
-|mcpServers|any|false|none|Mcpservers|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|[[McpServerSpec](#schemamcpserverspec)]|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-#### 枚举值
-
-|属性|值|
-|---|---|
-|toolSource|current_mcp|
-|toolSource|stdio|
-
-<h2 id="tocS_AlertQuery">AlertQuery</h2>
-
-<a id="schemaalertquery"></a>
-<a id="schema_AlertQuery"></a>
-<a id="tocSalertquery"></a>
-<a id="tocsalertquery"></a>
-
-```json
-{
-  "page": 0,
-  "pageSize": 0,
-  "excludeProcessed": false
-}
-
-```
-
-AlertQuery
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|page|integer|true|none|Page|当前页码|
-|pageSize|integer|true|none|Pagesize|每页记录数|
-|excludeProcessed|boolean|false|none|Excludeprocessed|是否排除已处理的告警|
-
-<h2 id="tocS_ApiCredentialCreate">ApiCredentialCreate</h2>
-
-<a id="schemaapicredentialcreate"></a>
-<a id="schema_ApiCredentialCreate"></a>
-<a id="tocSapicredentialcreate"></a>
-<a id="tocsapicredentialcreate"></a>
-
-```json
-{
-  "name": "string",
-  "provider": "OpenAI",
-  "baseUrl": "string",
-  "isActive": true,
-  "description": "string",
-  "quotaLimit": 0,
-  "apiKey": "stringstri"
-}
-
-```
-
-ApiCredentialCreate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|name|string|true|none|Name|凭证别名|
-|provider|[ProviderEnum](#schemaproviderenum)|true|none||服务商类型|
-|baseUrl|any|false|none|Baseurl|自定义请求地址|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|isActive|boolean|false|none|Isactive|是否启用|
-|description|any|false|none|Description|备注说明|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|quotaLimit|any|false|none|Quotalimit|预算额度限制|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|apiKey|string|true|none|Apikey|完整的API Key|
-
-<h2 id="tocS_ApiCredentialUpdate">ApiCredentialUpdate</h2>
-
-<a id="schemaapicredentialupdate"></a>
-<a id="schema_ApiCredentialUpdate"></a>
-<a id="tocSapicredentialupdate"></a>
-<a id="tocsapicredentialupdate"></a>
-
-```json
-{
-  "credentialId": 1,
-  "name": "string",
-  "baseUrl": "string",
-  "isActive": true,
-  "description": "string",
-  "quotaLimit": 0
-}
-
-```
-
-ApiCredentialUpdate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|credentialId|integer|true|none|Credentialid|none|
-|name|any|false|none|Name|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|baseUrl|any|false|none|Baseurl|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|isActive|any|false|none|Isactive|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|boolean|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|description|any|false|none|Description|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|quotaLimit|any|false|none|Quotalimit|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_ApplySslRequest">ApplySslRequest</h2>
-
-<a id="schemaapplysslrequest"></a>
-<a id="schema_ApplySslRequest"></a>
-<a id="tocSapplysslrequest"></a>
-<a id="tocsapplysslrequest"></a>
-
-```json
-{
-  "domain": "string",
-  "email": "string"
-}
-
-```
-
-ApplySslRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|domain|string|true|none|Domain|域名|
-|email|string|true|none|Email|邮箱|
-
-<h2 id="tocS_AutoCleanRequest">AutoCleanRequest</h2>
-
-<a id="schemaautocleanrequest"></a>
-<a id="schema_AutoCleanRequest"></a>
-<a id="tocSautocleanrequest"></a>
-<a id="tocsautocleanrequest"></a>
-
-```json
-{
-  "cpuThreshold": 90,
-  "memoryThreshold": 80
-}
-
-```
-
-AutoCleanRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|cpuThreshold|number|false|none|Cputhreshold|CPU占用阈值 (%)|
-|memoryThreshold|number|false|none|Memorythreshold|内存占用阈值 (%)|
-
-<h2 id="tocS_BatchDeletePathRequest">BatchDeletePathRequest</h2>
-
-<a id="schemabatchdeletepathrequest"></a>
-<a id="schema_BatchDeletePathRequest"></a>
-<a id="tocSbatchdeletepathrequest"></a>
-<a id="tocsbatchdeletepathrequest"></a>
-
-```json
-{
-  "paths": [
-    "string"
-  ]
-}
-
-```
-
-BatchDeletePathRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|paths|[string]|true|none|Paths|要删除的路径列表|
-
-<h2 id="tocS_BatchKillProcessRequest">BatchKillProcessRequest</h2>
-
-<a id="schemabatchkillprocessrequest"></a>
-<a id="schema_BatchKillProcessRequest"></a>
-<a id="tocSbatchkillprocessrequest"></a>
-<a id="tocsbatchkillprocessrequest"></a>
-
-```json
-{
-  "pids": [
-    0
-  ],
-  "reason": "string"
-}
-
-```
-
-BatchKillProcessRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|pids|[integer]|true|none|Pids|待杀死的PID列表|
-|reason|any|false|none|Reason|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_Body_uploadFile_file_upload_post">Body_uploadFile_file_upload_post</h2>
-
-<a id="schemabody_uploadfile_file_upload_post"></a>
-<a id="schema_Body_uploadFile_file_upload_post"></a>
-<a id="tocSbody_uploadfile_file_upload_post"></a>
-<a id="tocsbody_uploadfile_file_upload_post"></a>
-
-```json
-{
-  "destinationPath": "string",
-  "file": "string"
-}
-
-```
-
-Body_uploadFile_file_upload_post
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|destinationPath|string|true|none|Destinationpath|none|
-|file|string|true|none|File|none|
-
-<h2 id="tocS_ConfigSslRequest">ConfigSslRequest</h2>
-
-<a id="schemaconfigsslrequest"></a>
-<a id="schema_ConfigSslRequest"></a>
-<a id="tocSconfigsslrequest"></a>
-<a id="tocsconfigsslrequest"></a>
-
-```json
-{
-  "domain": "string",
-  "certPath": "string",
-  "keyPath": "string"
-}
-
-```
-
-ConfigSslRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|domain|string|true|none|Domain|域名|
-|certPath|string|true|none|Certpath|证书路径|
-|keyPath|string|true|none|Keypath|私钥路径|
-
-<h2 id="tocS_CopyFileRequest">CopyFileRequest</h2>
-
-<a id="schemacopyfilerequest"></a>
-<a id="schema_CopyFileRequest"></a>
-<a id="tocScopyfilerequest"></a>
-<a id="tocscopyfilerequest"></a>
-
-```json
-{
-  "sourcePath": "string",
-  "destinationPath": "string"
-}
-
-```
-
-CopyFileRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|sourcePath|string|true|none|Sourcepath|原文件路径|
-|destinationPath|string|true|none|Destinationpath|新文件路径|
-
-<h2 id="tocS_CreateDatabaseRequest">CreateDatabaseRequest</h2>
-
-<a id="schemacreatedatabaserequest"></a>
-<a id="schema_CreateDatabaseRequest"></a>
-<a id="tocScreatedatabaserequest"></a>
-<a id="tocscreatedatabaserequest"></a>
-
-```json
-{
-  "dbName": "string"
-}
-
-```
-
-CreateDatabaseRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|dbName|string|true|none|Dbname|数据库名称|
-
-<h2 id="tocS_CreateFileRequest">CreateFileRequest</h2>
-
-<a id="schemacreatefilerequest"></a>
-<a id="schema_CreateFileRequest"></a>
-<a id="tocScreatefilerequest"></a>
-<a id="tocscreatefilerequest"></a>
-
-```json
-{
-  "path": "string"
-}
-
-```
-
-CreateFileRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|path|string|true|none|Path|文件路径|
-
-<h2 id="tocS_CreateSiteRequest">CreateSiteRequest</h2>
-
-<a id="schemacreatesiterequest"></a>
-<a id="schema_CreateSiteRequest"></a>
-<a id="tocScreatesiterequest"></a>
-<a id="tocscreatesiterequest"></a>
-
-```json
-{
-  "domain": "string",
-  "mode": "string",
-  "listenPort": 80,
-  "rootPath": "string",
-  "proxyPass": "string",
-  "proxyPort": 1,
-  "proxyProtocol": "http"
-}
-
-```
-
-CreateSiteRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|domain|string|true|none|Domain|域名|
-|mode|string|true|none|Mode|站点类型|
-|listenPort|integer|false|none|Listenport|监听端口|
-|rootPath|any|false|none|Rootpath|静态站点根目录|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|proxyPass|any|false|none|Proxypass|反代目标地址|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|proxyPort|any|false|none|Proxyport|反代目标端口|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|proxyProtocol|string|false|none|Proxyprotocol|反代协议|
-
-<h2 id="tocS_CreateUserRequest">CreateUserRequest</h2>
-
-<a id="schemacreateuserrequest"></a>
-<a id="schema_CreateUserRequest"></a>
-<a id="tocScreateuserrequest"></a>
-<a id="tocscreateuserrequest"></a>
-
-```json
-{
-  "dbName": "string",
-  "username": "string",
-  "password": "string"
-}
-
-```
-
-CreateUserRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|dbName|string|true|none|Dbname|数据库名称|
-|username|string|true|none|Username|用户名|
-|password|string|true|none|Password|密码|
-
-<h2 id="tocS_DeletePathRequest">DeletePathRequest</h2>
-
-<a id="schemadeletepathrequest"></a>
-<a id="schema_DeletePathRequest"></a>
-<a id="tocSdeletepathrequest"></a>
-<a id="tocsdeletepathrequest"></a>
-
-```json
-{
-  "path": "string"
-}
-
-```
-
-DeletePathRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|path|string|true|none|Path|要删除的路径|
-
-<h2 id="tocS_GetFolderTreeRequest">GetFolderTreeRequest</h2>
-
-<a id="schemagetfoldertreerequest"></a>
-<a id="schema_GetFolderTreeRequest"></a>
-<a id="tocSgetfoldertreerequest"></a>
-<a id="tocsgetfoldertreerequest"></a>
-
-```json
-{
-  "rootPath": "string",
-  "depth": 1
-}
-
-```
-
-GetFolderTreeRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|rootPath|string|true|none|Rootpath|根路径|
-|depth|integer|false|none|Depth|递归深度|
 
 <h2 id="tocS_HTTPValidationError">HTTPValidationError</h2>
 
@@ -11280,1169 +19505,6 @@ HTTPValidationError
 |名称|类型|必选|约束|中文名|说明|
 |---|---|---|---|---|---|
 |detail|[[ValidationError](#schemavalidationerror)]|false|none|Detail|none|
-
-<h2 id="tocS_InspectionConfigUpdate">InspectionConfigUpdate</h2>
-
-<a id="schemainspectionconfigupdate"></a>
-<a id="schema_InspectionConfigUpdate"></a>
-<a id="tocSinspectionconfigupdate"></a>
-<a id="tocsinspectionconfigupdate"></a>
-
-```json
-{
-  "intervalMinutes": 1
-}
-
-```
-
-InspectionConfigUpdate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|intervalMinutes|integer|true|none|Intervalminutes|none|
-
-<h2 id="tocS_KillProcessRequest">KillProcessRequest</h2>
-
-<a id="schemakillprocessrequest"></a>
-<a id="schema_KillProcessRequest"></a>
-<a id="tocSkillprocessrequest"></a>
-<a id="tocskillprocessrequest"></a>
-
-```json
-{
-  "pid": 0,
-  "reason": "string"
-}
-
-```
-
-KillProcessRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|pid|integer|true|none|Pid|none|
-|reason|any|false|none|Reason|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_ListDirectoryRequest">ListDirectoryRequest</h2>
-
-<a id="schemalistdirectoryrequest"></a>
-<a id="schema_ListDirectoryRequest"></a>
-<a id="tocSlistdirectoryrequest"></a>
-<a id="tocslistdirectoryrequest"></a>
-
-```json
-{
-  "page": 0,
-  "pageSize": 0,
-  "path": "string"
-}
-
-```
-
-ListDirectoryRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|page|integer|true|none|Page|当前页码|
-|pageSize|integer|true|none|Pagesize|每页记录数|
-|path|string|true|none|Path|目标路径|
-
-<h2 id="tocS_McpServerSpec">McpServerSpec</h2>
-
-<a id="schemamcpserverspec"></a>
-<a id="schema_McpServerSpec"></a>
-<a id="tocSmcpserverspec"></a>
-<a id="tocsmcpserverspec"></a>
-
-```json
-{
-  "name": "string",
-  "command": [
-    "string"
-  ],
-  "cwd": "string"
-}
-
-```
-
-McpServerSpec
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|name|string|true|none|Name|none|
-|command|[string]|true|none|Command|argv style command|
-|cwd|any|false|none|Cwd|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_ModelPricingCreate">ModelPricingCreate</h2>
-
-<a id="schemamodelpricingcreate"></a>
-<a id="schema_ModelPricingCreate"></a>
-<a id="tocSmodelpricingcreate"></a>
-<a id="tocsmodelpricingcreate"></a>
-
-```json
-{
-  "model": "string",
-  "inputPrice": 1,
-  "cachedInputPrice": 0.1,
-  "outputPrice": 3,
-  "multiplier": 1,
-  "credentialId": 1
-}
-
-```
-
-ModelPricingCreate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|model|string|true|none|Model|none|
-|inputPrice|number|false|none|Inputprice|none|
-|cachedInputPrice|number|false|none|Cachedinputprice|none|
-|outputPrice|number|false|none|Outputprice|none|
-|multiplier|number|false|none|Multiplier|none|
-|credentialId|any|false|none|Credentialid|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_ModelPricingUpdate">ModelPricingUpdate</h2>
-
-<a id="schemamodelpricingupdate"></a>
-<a id="schema_ModelPricingUpdate"></a>
-<a id="tocSmodelpricingupdate"></a>
-<a id="tocsmodelpricingupdate"></a>
-
-```json
-{
-  "model": "string",
-  "inputPrice": 0,
-  "cachedInputPrice": 0,
-  "outputPrice": 0,
-  "multiplier": 0,
-  "credentialId": 1,
-  "isActive": 1
-}
-
-```
-
-ModelPricingUpdate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|model|any|false|none|Model|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|inputPrice|any|false|none|Inputprice|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|cachedInputPrice|any|false|none|Cachedinputprice|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|outputPrice|any|false|none|Outputprice|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|multiplier|any|false|none|Multiplier|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|number|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|credentialId|any|false|none|Credentialid|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|isActive|any|false|none|Isactive|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_MysqlConnectionTestRequest">MysqlConnectionTestRequest</h2>
-
-<a id="schemamysqlconnectiontestrequest"></a>
-<a id="schema_MysqlConnectionTestRequest"></a>
-<a id="tocSmysqlconnectiontestrequest"></a>
-<a id="tocsmysqlconnectiontestrequest"></a>
-
-```json
-{
-  "host": "string",
-  "port": 3306,
-  "username": "string",
-  "password": "string"
-}
-
-```
-
-MysqlConnectionTestRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|host|string|true|none|Host|MySQL 主机地址|
-|port|integer|false|none|Port|MySQL 端口|
-|username|string|true|none|Username|MySQL 用户名|
-|password|string|true|none|Password|MySQL 密码|
-
-<h2 id="tocS_PageSearchRequest">PageSearchRequest</h2>
-
-<a id="schemapagesearchrequest"></a>
-<a id="schema_PageSearchRequest"></a>
-<a id="tocSpagesearchrequest"></a>
-<a id="tocspagesearchrequest"></a>
-
-```json
-{
-  "page": 0,
-  "pageSize": 0
-}
-
-```
-
-PageSearchRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|page|integer|true|none|Page|当前页码|
-|pageSize|integer|true|none|Pagesize|每页记录数|
-
-<h2 id="tocS_PortRuleCreate">PortRuleCreate</h2>
-
-<a id="schemaportrulecreate"></a>
-<a id="schema_PortRuleCreate"></a>
-<a id="tocSportrulecreate"></a>
-<a id="tocsportrulecreate"></a>
-
-```json
-{
-  "port": 1,
-  "protocol": 1,
-  "ipVersion": 4,
-  "sourceIp": "string",
-  "destinationIp": "string",
-  "priority": 100,
-  "action": 1
-}
-
-```
-
-PortRuleCreate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|port|integer|true|none|Port|端口号|
-|protocol|integer|true|none|Protocol|协议类型：0=UDP, 1=TCP|
-|ipVersion|integer|false|none|Ipversion|IP版本：4=IPv4, 6=IPv6|
-|sourceIp|string|true|none|Sourceip|来源IP，支持CIDR|
-|destinationIp|string|true|none|Destinationip|目标IP，支持CIDR|
-|priority|integer|false|none|Priority|规则优先级，默认100|
-|action|integer|true|none|Action|动作：0=拒绝, 1=允许|
-
-<h2 id="tocS_PortRuleDeleteRequest">PortRuleDeleteRequest</h2>
-
-<a id="schemaportruledeleterequest"></a>
-<a id="schema_PortRuleDeleteRequest"></a>
-<a id="tocSportruledeleterequest"></a>
-<a id="tocsportruledeleterequest"></a>
-
-```json
-{
-  "port": 1,
-  "protocol": 1,
-  "ipVersion": 4,
-  "sourceIp": "string",
-  "destinationIp": "string"
-}
-
-```
-
-PortRuleDeleteRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|port|integer|true|none|Port|端口号|
-|protocol|integer|true|none|Protocol|协议类型：0=UDP, 1=TCP|
-|ipVersion|any|false|none|Ipversion|IP版本：4=IPv4, 6=IPv6|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|sourceIp|any|false|none|Sourceip|来源IP，支持CIDR|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|destinationIp|any|false|none|Destinationip|目标IP，支持CIDR|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_ProviderEnum">ProviderEnum</h2>
-
-<a id="schemaproviderenum"></a>
-<a id="schema_ProviderEnum"></a>
-<a id="tocSproviderenum"></a>
-<a id="tocsproviderenum"></a>
-
-```json
-"OpenAI"
-
-```
-
-ProviderEnum
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|ProviderEnum|string|false|none|ProviderEnum|none|
-
-#### 枚举值
-
-|属性|值|
-|---|---|
-|ProviderEnum|OpenAI|
-|ProviderEnum|Azure|
-|ProviderEnum|Anthropic|
-|ProviderEnum|Custom|
-
-<h2 id="tocS_RenameOrMoveFileRequest">RenameOrMoveFileRequest</h2>
-
-<a id="schemarenameormovefilerequest"></a>
-<a id="schema_RenameOrMoveFileRequest"></a>
-<a id="tocSrenameormovefilerequest"></a>
-<a id="tocsrenameormovefilerequest"></a>
-
-```json
-{
-  "sourcePath": "string",
-  "destinationPath": "string"
-}
-
-```
-
-RenameOrMoveFileRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|sourcePath|string|true|none|Sourcepath|原文件路径|
-|destinationPath|string|true|none|Destinationpath|新文件路径|
-
-<h2 id="tocS_RenewSslRequest">RenewSslRequest</h2>
-
-<a id="schemarenewsslrequest"></a>
-<a id="schema_RenewSslRequest"></a>
-<a id="tocSrenewsslrequest"></a>
-<a id="tocsrenewsslrequest"></a>
-
-```json
-{
-  "domain": "string"
-}
-
-```
-
-RenewSslRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|domain|string|true|none|Domain|域名|
-
-<h2 id="tocS_ScheduledTaskApprovalPolicy">ScheduledTaskApprovalPolicy</h2>
-
-<a id="schemascheduledtaskapprovalpolicy"></a>
-<a id="schema_ScheduledTaskApprovalPolicy"></a>
-<a id="tocSscheduledtaskapprovalpolicy"></a>
-<a id="tocsscheduledtaskapprovalpolicy"></a>
-
-```json
-{
-  "allowedTools": [
-    "string"
-  ],
-  "allowedPaths": [
-    "string"
-  ],
-  "deniedPaths": [
-    "string"
-  ],
-  "allowedPrivilegedCommands": [
-    "string"
-  ],
-  "ttlSeconds": 3600,
-  "maxRuns": 100
-}
-
-```
-
-ScheduledTaskApprovalPolicy
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|allowedTools|[string]|false|none|Allowedtools|none|
-|allowedPaths|[string]|false|none|Allowedpaths|none|
-|deniedPaths|[string]|false|none|Deniedpaths|none|
-|allowedPrivilegedCommands|[string]|false|none|Allowedprivilegedcommands|none|
-|ttlSeconds|integer|false|none|Ttlseconds|none|
-|maxRuns|integer|false|none|Maxruns|none|
-
-<h2 id="tocS_ScheduledTaskCreate">ScheduledTaskCreate</h2>
-
-<a id="schemascheduledtaskcreate"></a>
-<a id="schema_ScheduledTaskCreate"></a>
-<a id="tocSscheduledtaskcreate"></a>
-<a id="tocsscheduledtaskcreate"></a>
-
-```json
-{
-  "name": "string",
-  "cronExpression": "string",
-  "taskDescription": "string",
-  "approvalPolicy": {
-    "allowedTools": [
-      "string"
-    ],
-    "allowedPaths": [
-      "string"
-    ],
-    "deniedPaths": [
-      "string"
-    ],
-    "allowedPrivilegedCommands": [
-      "string"
-    ],
-    "ttlSeconds": 3600,
-    "maxRuns": 100
-  }
-}
-
-```
-
-ScheduledTaskCreate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|name|string|true|none|Name|none|
-|cronExpression|string|true|none|Cronexpression|none|
-|taskDescription|string|true|none|Taskdescription|none|
-|approvalPolicy|[ScheduledTaskApprovalPolicy](#schemascheduledtaskapprovalpolicy)|false|none||none|
-
-<h2 id="tocS_ScheduledTaskUpdate">ScheduledTaskUpdate</h2>
-
-<a id="schemascheduledtaskupdate"></a>
-<a id="schema_ScheduledTaskUpdate"></a>
-<a id="tocSscheduledtaskupdate"></a>
-<a id="tocsscheduledtaskupdate"></a>
-
-```json
-{
-  "name": "string",
-  "cronExpression": "string",
-  "taskDescription": "string",
-  "approvalPolicy": {
-    "allowedTools": [
-      "string"
-    ],
-    "allowedPaths": [
-      "string"
-    ],
-    "deniedPaths": [
-      "string"
-    ],
-    "allowedPrivilegedCommands": [
-      "string"
-    ],
-    "ttlSeconds": 3600,
-    "maxRuns": 100
-  }
-}
-
-```
-
-ScheduledTaskUpdate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|name|any|false|none|Name|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|cronExpression|any|false|none|Cronexpression|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|taskDescription|any|false|none|Taskdescription|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|approvalPolicy|[ScheduledTaskApprovalPolicy](#schemascheduledtaskapprovalpolicy)|false|none||none|
-
-<h2 id="tocS_SearchFilesRequest">SearchFilesRequest</h2>
-
-<a id="schemasearchfilesrequest"></a>
-<a id="schema_SearchFilesRequest"></a>
-<a id="tocSsearchfilesrequest"></a>
-<a id="tocssearchfilesrequest"></a>
-
-```json
-{
-  "path": "string",
-  "expression": "string",
-  "recursive": false,
-  "ignoreCase": false,
-  "invertMatch": false
-}
-
-```
-
-SearchFilesRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|path|string|true|none|Path|搜索起始路径|
-|expression|string|true|none|Expression|搜索表达式/关键字|
-|recursive|boolean|false|none|Recursive|是否递归搜索子目录|
-|ignoreCase|boolean|false|none|Ignorecase|是否忽略大小写|
-|invertMatch|boolean|false|none|Invertmatch|是否取反匹配|
-
-<h2 id="tocS_SecuritySwitchUpdate">SecuritySwitchUpdate</h2>
-
-<a id="schemasecurityswitchupdate"></a>
-<a id="schema_SecuritySwitchUpdate"></a>
-<a id="tocSsecurityswitchupdate"></a>
-<a id="tocssecurityswitchupdate"></a>
-
-```json
-{
-  "firewallEnabled": true,
-  "sshServiceEnabled": true
-}
-
-```
-
-SecuritySwitchUpdate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|firewallEnabled|any|false|none|Firewallenabled|防火墙是否开启|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|boolean|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|sshServiceEnabled|any|false|none|Sshserviceenabled|SSH服务是否开启|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|boolean|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_SshConfigUpdate">SshConfigUpdate</h2>
-
-<a id="schemasshconfigupdate"></a>
-<a id="schema_SshConfigUpdate"></a>
-<a id="tocSsshconfigupdate"></a>
-<a id="tocssshconfigupdate"></a>
-
-```json
-{
-  "port": 0,
-  "permitRootLogin": "string",
-  "passwordAuthentication": "string",
-  "allowUsers": [
-    "string"
-  ],
-  "allowGroups": [
-    "string"
-  ],
-  "listenAddress": [
-    "string"
-  ],
-  "protocol": 0,
-  "loginGraceTime": 0,
-  "maxAuthTries": 0
-}
-
-```
-
-SshConfigUpdate
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|port|any|false|none|Port|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|permitRootLogin|any|false|none|Permitrootlogin|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|passwordAuthentication|any|false|none|Passwordauthentication|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|allowUsers|any|false|none|Allowusers|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|[string]|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|allowGroups|any|false|none|Allowgroups|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|[string]|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|listenAddress|any|false|none|Listenaddress|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|[string]|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|protocol|any|false|none|Protocol|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|loginGraceTime|any|false|none|Logingracetime|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-continued
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|maxAuthTries|any|false|none|Maxauthtries|none|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|integer|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_TerminalLogSearchRequest">TerminalLogSearchRequest</h2>
-
-<a id="schematerminallogsearchrequest"></a>
-<a id="schema_TerminalLogSearchRequest"></a>
-<a id="tocSterminallogsearchrequest"></a>
-<a id="tocsterminallogsearchrequest"></a>
-
-```json
-{
-  "page": 0,
-  "pageSize": 0
-}
-
-```
-
-TerminalLogSearchRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|page|integer|true|none|Page|当前页码|
-|pageSize|integer|true|none|Pagesize|每页记录数|
-
-<h2 id="tocS_UnzipFileRequest">UnzipFileRequest</h2>
-
-<a id="schemaunzipfilerequest"></a>
-<a id="schema_UnzipFileRequest"></a>
-<a id="tocSunzipfilerequest"></a>
-<a id="tocsunzipfilerequest"></a>
-
-```json
-{
-  "dstPath": "string",
-  "zipFilePath": "string"
-}
-
-```
-
-UnzipFileRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|dstPath|string|true|none|Dstpath|解压目标路径|
-|zipFilePath|any|false|none|Zipfilepath|压缩文件路径|
-
-anyOf
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|string|false|none||none|
-
-or
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|» *anonymous*|null|false|none||none|
-
-<h2 id="tocS_UpdateOwnerRequest">UpdateOwnerRequest</h2>
-
-<a id="schemaupdateownerrequest"></a>
-<a id="schema_UpdateOwnerRequest"></a>
-<a id="tocSupdateownerrequest"></a>
-<a id="tocsupdateownerrequest"></a>
-
-```json
-{
-  "targetPath": "string",
-  "owner": "string",
-  "group": "string",
-  "recursive": false
-}
-
-```
-
-UpdateOwnerRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|targetPath|string|true|none|Targetpath|路径|
-|owner|string|true|none|Owner|新所有者|
-|group|string|true|none|Group|新组|
-|recursive|boolean|false|none|Recursive|是否递归更新子目录|
-
-<h2 id="tocS_UpdatePermissionsRequest">UpdatePermissionsRequest</h2>
-
-<a id="schemaupdatepermissionsrequest"></a>
-<a id="schema_UpdatePermissionsRequest"></a>
-<a id="tocSupdatepermissionsrequest"></a>
-<a id="tocsupdatepermissionsrequest"></a>
-
-```json
-{
-  "path": "string",
-  "permissions": "string"
-}
-
-```
-
-UpdatePermissionsRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|path|string|true|none|Path|文件路径|
-|permissions|string|true|none|Permissions|新权限值|
-
-<h2 id="tocS_UpdateSiteConfigRequest">UpdateSiteConfigRequest</h2>
-
-<a id="schemaupdatesiteconfigrequest"></a>
-<a id="schema_UpdateSiteConfigRequest"></a>
-<a id="tocSupdatesiteconfigrequest"></a>
-<a id="tocsupdatesiteconfigrequest"></a>
-
-```json
-{
-  "content": "string"
-}
-
-```
-
-UpdateSiteConfigRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|content|string|true|none|Content|Nginx 配置原文（完整 server block）|
-
-<h2 id="tocS_UserLoginRequest">UserLoginRequest</h2>
-
-<a id="schemauserloginrequest"></a>
-<a id="schema_UserLoginRequest"></a>
-<a id="tocSuserloginrequest"></a>
-<a id="tocsuserloginrequest"></a>
-
-```json
-{
-  "account": "string",
-  "hashedPassword": "string"
-}
-
-```
-
-UserLoginRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|account|string|true|none|Account|用户名或邮箱|
-|hashedPassword|string|true|none|Hashedpassword|密码|
 
 <h2 id="tocS_ValidationError">ValidationError</h2>
 
@@ -12492,50 +19554,4 @@ continued
 |type|string|true|none|Error Type|none|
 |input|any|false|none|Input|none|
 |ctx|object|false|none|Context|none|
-
-<h2 id="tocS_WriteTextRequest">WriteTextRequest</h2>
-
-<a id="schemawritetextrequest"></a>
-<a id="schema_WriteTextRequest"></a>
-<a id="tocSwritetextrequest"></a>
-<a id="tocswritetextrequest"></a>
-
-```json
-{
-  "path": "string",
-  "content": "string"
-}
-
-```
-
-WriteTextRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|path|string|true|none|Path|文件路径|
-|content|string|true|none|Content|要写入的内容|
-
-<h2 id="tocS_ZipFileRequest">ZipFileRequest</h2>
-
-<a id="schemazipfilerequest"></a>
-<a id="schema_ZipFileRequest"></a>
-<a id="tocSzipfilerequest"></a>
-<a id="tocszipfilerequest"></a>
-
-```json
-{
-  "path": "string"
-}
-
-```
-
-ZipFileRequest
-
-### 属性
-
-|名称|类型|必选|约束|中文名|说明|
-|---|---|---|---|---|---|
-|path|string|true|none|Path|文件路径|
 

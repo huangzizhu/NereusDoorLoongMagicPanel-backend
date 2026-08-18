@@ -15,6 +15,7 @@ from agent.shared.types import AgentConfig, AgentEvent, EventType
 from agent.shared.id_gen import gen_session_id, gen_trace_id
 from agent.config_envs.loader import loadConfig
 from agent.integration.event_stream import EventStream
+from agent.prompt_loader import loadPrompt
 from agent.safety.rule_engine import RuleEngine
 from agent.safety.canary import CanaryManager
 from agent.safety.llm_classifier import InjectionClassifier
@@ -67,7 +68,10 @@ class AgentSession:
                  mcpServers: list[dict] | None = None,
                  autoApproveScheduled: bool = False,
                  nonInteractiveApprovals: bool = False,
-                 scheduledApprovalPolicy: dict | None = None):
+                 scheduledApprovalPolicy: dict | None = None,
+                 source: str = "manual",
+                 autoRunTaskId: int | None = None,
+                 autoRunGuidance: str = ""):
         self._config = config
         self._userId = userId
         self._sessionId = sessionId or gen_session_id()
@@ -97,22 +101,13 @@ class AgentSession:
             self._workspaceDir = _os.path.join(root, "workspace")
         _os.makedirs(self._workspaceDir, exist_ok=True)
 
-        sysPromptPath = _os.path.join(root, "conf", "prompts", "system", "v1.2.0.txt")
-        safetyRulesPath = _os.path.join(root, "conf", "prompts", "safety", "rules_summary.txt")
-
-        try:
-            with open(sysPromptPath) as f:
-                sysPrompt = f.read()
-        except FileNotFoundError:
-            sysPrompt = "你是一个智能运维助手。"
+        sysPrompt = loadPrompt(
+            "system/v1.2.0.txt", fallback="你是一个智能运维助手。"
+        )
 
         # 模式指令不再拼入 system prompt — 由 AgentCore._injectModePrompt 在每次 LLM 调用前注入
         # （KV-Cache 优化：固定 system prompt → 前缀缓存命中）
-        try:
-            with open(safetyRulesPath) as f:
-                safetyRules = f.read()
-        except FileNotFoundError:
-            safetyRules = ""
+        safetyRules = loadPrompt("safety/rules_summary.txt", fallback="")
 
         # ── 为 MCP 子进程注入默认 workspace cwd ──
         if mcpServers and toolSource in ("stdio", "mcp_stdio", "stdio_mcp"):
@@ -125,13 +120,28 @@ class AgentSession:
             toolSource,
             includeCoreTools,
             mcpServers,
+            excludeInteractiveTools=nonInteractiveApprovals,
         )
         self._registry = registry
 
         # 核心组件
         safety = RuleEngine(config.safety_policy)
         canary = CanaryManager(enabled=config.canary_enabled)
-        promptBuilder = PromptBuilder(sysPrompt, safetyRules, canary=canary)
+
+        # ── 运维经验库摘要（组织记忆，会话固定一次，KV-Cache 前缀稳定）──
+        # 表不存在/服务异常时返回空摘要，绝不阻塞会话创建
+        extraKnowledge: str | None = None
+        try:
+            from gateway.service.OpsExperienceService import OpsExperienceService
+            summary = OpsExperienceService().knowledgeSummary()
+            extraKnowledge = summary or None
+        except Exception:
+            logging.getLogger("ndlmpanel.agent_session").warning(
+                "运维经验库摘要生成失败，本次会话跳过经验注入")
+
+        promptBuilder = PromptBuilder(
+            sysPrompt, safetyRules, canary=canary, extraKnowledge=extraKnowledge
+        )
 
         # LLM Provider — 由工厂按 config.llm_provider 选择，
         # 无 api_key 时自动回退 MockProvider
@@ -167,6 +177,9 @@ class AgentSession:
             autoApproveScheduled=autoApproveScheduled,
             nonInteractiveApprovals=nonInteractiveApprovals,
             scheduledApprovalPolicy=scheduledApprovalPolicy,
+            autoRunTaskId=autoRunTaskId,
+            autoRunSource=source,
+            autoRunGuidance=autoRunGuidance,
             injectionClassifier=injectionClassifier,
             canary=canary,
             alertSink=_writeAgentAlert,
@@ -179,6 +192,7 @@ class AgentSession:
         toolSource: str,
         includeCoreTools: bool,
         mcpServers: list[dict] | None = None,
+        excludeInteractiveTools: bool = False,
     ):
         normalized = toolSource.replace("-", "_").lower()
         if normalized in {"current_mcp", "mcp"}:
@@ -210,15 +224,16 @@ class AgentSession:
             )
 
         # 始终注册 submitPlan + ask_choice（两阶段 Plan 模式必需，不依赖 includeCoreTools）
+        # 无人值守（定时任务/巡检）除外：这些交互工具需要人工在线响应，直接剔除。
         existing = {
             tool["function"]["name"]
             for tool in registry.listTools()
         }
-        if "submitPlan" not in existing:
+        if "submitPlan" not in existing and not excludeInteractiveTools:
             from agent.agent_mcp.server.tool_adapter import submitPlan as _submitPlan
             registry.register(_submitPlan, "read_only")
             existing.add("submitPlan")
-        if "ask_choice" not in existing:
+        if "ask_choice" not in existing and not excludeInteractiveTools:
             from agent.agent_mcp.server.tool_adapter import ask_choice as _ask_choice
             registry.register(_ask_choice, "read_only")
             existing.add("ask_choice")
@@ -227,13 +242,24 @@ class AgentSession:
             for tool in buildAgentTools():
                 func = tool.func
                 name = tool.name
-                if name == "submitPlan":
+                if name == "submitPlan" and not excludeInteractiveTools:
                     continue  # 已在上方注册
                 if name in existing:
                     name = f"core_{name}"
                     func = _aliasedTool(tool.func, name)
                 registry.register(func, tool.riskLevel)
                 existing.add(name)
+
+        # 无人值守：剔除需人工在线的交互/特权工具（默认工具集中可能已注册）
+        if excludeInteractiveTools:
+            for name in (
+                "submitPlan", "ask_choice", "submitElevation",
+                "runPrivileged", "writePrivilegedFile",
+                "nginxWriteStaticFile",
+            ):
+                unregister = getattr(registry, "unregister", None)
+                if unregister is not None:
+                    unregister(name)
 
         return registry, dispatcher, bridge
 

@@ -75,6 +75,15 @@ class AdminController(AbstractController):
                 return Response.error(msg="特权码不存在")
             return Response.success(data=entry.to_dict())
 
+        @self.router.get("/authorization/{code}")
+        def get_authorization(code: str) -> ResponseModel:
+            """查询工具授权请求详情（给 CLI 审批展示用）。"""
+            from gateway.service.ToolAuthorizationService import ToolAuthorizationService
+            detail = ToolAuthorizationService().getRequestDetail(code)
+            if detail is None:
+                return Response.error(msg="工具授权请求不存在")
+            return Response.success(data=detail)
+
         @self.router.get("/pending")
         def list_pending() -> ResponseModel:
             """列出所有待审批的 code。"""
@@ -96,7 +105,12 @@ class AdminController(AbstractController):
             entry = self.elevation_service.get_code(code)
             token = self.elevation_service.approve_code(code, approved_by)
             if token is None:
-                return Response.error(msg="批准失败：code 不存在或状态不是 pending")
+                # 同步 DB 状态：工具授权请求的 code 过期/丢失时，
+                # 把库内 pending 记录标记 expired（仅 pending 生效），
+                # 避免残留记录与审计歧义
+                from gateway.service.ToolAuthorizationService import ToolAuthorizationService
+                ToolAuthorizationService().expire(code)
+                return Response.error(msg="批准失败：code 不存在、已过期或状态不是 pending")
 
             request_type = getattr(entry, "request_type", "privileged") if entry else "privileged"
             task_id = getattr(entry, "task_id", None) if entry else None
@@ -109,6 +123,18 @@ class AdminController(AbstractController):
                 )
                 if not ok:
                     return Response.error(msg="批准失败：定时任务不存在或状态不是 pending_approval")
+            elif request_type == "tool_authorization":
+                from gateway.service.ToolAuthorizationService import ToolAuthorizationService
+                ok = ToolAuthorizationService().approve(
+                    code,
+                    approved_by,
+                    token.token_id,
+                    path_prefix=body.get("path_prefix"),
+                )
+                if not ok:
+                    # 写回失败时吊销刚签发的 token，避免"报错但特权通道已放开"
+                    self.elevation_service.revoke_token(token.token_id)
+                    return Response.error(msg="批准失败：工具授权请求不存在")
 
             # 推送 WS 事件通知前端（async handler 可直接 await）
             from gateway.service.AgentGatewayService import AgentGatewayService
@@ -155,6 +181,9 @@ class AdminController(AbstractController):
                 if request_type == "scheduled_task_policy" and task_id is not None:
                     from gateway.service.ScheduledTaskService import ScheduledTaskService
                     ScheduledTaskService().rejectScheduledTaskPolicy(int(task_id), reason)
+                elif request_type == "tool_authorization":
+                    from gateway.service.ToolAuthorizationService import ToolAuthorizationService
+                    ToolAuthorizationService().reject(code, reason)
                 # 推送 WS 事件通知前端
                 from gateway.service.AgentGatewayService import AgentGatewayService
                 gw = AgentGatewayService()
